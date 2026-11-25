@@ -28,16 +28,15 @@ Plan for two environments:
 
 ## 1. Put the code on GitHub
 
-The project folder is already a git repository with an initial commit on `main` (the app is in
-`zhf-hub/`, documentation in `docs/`). Create an empty **private** repository on GitHub, then from
-the project folder:
+✅ Done: the code lives in the private repository
+**[github.com/ZacharyHortonFoundation/zhf-hub](https://github.com/ZacharyHortonFoundation/zhf-hub)**
+(organization `ZacharyHortonFoundation`, Free plan). The app is in `zhf-hub/`, documentation in `docs/`.
 
-```powershell
-git remote add origin https://github.com/<org>/zhf-hub.git
-git push -u origin main
-```
-`.gitignore` excludes `.env`, local databases and build output, so no secrets are pushed.
-GitHub Actions (`.github/workflows/ci.yml`) type-checks and builds every push.
+- Add ZHF staff/board members under the organization's *People* tab, and consider transferring
+  organization ownership to a ZHF-controlled account so the foundation keeps control long-term.
+- GitHub requires two-factor authentication for contributors — enable it before December 11, 2026.
+- `.gitignore` excludes `.env`, local databases and build output, so no secrets are in the repo.
+- GitHub Actions (`.github/workflows/ci.yml`) type-checks and builds every push.
 
 ## 2. Create the database (Neon)
 
