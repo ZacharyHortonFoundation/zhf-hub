@@ -2,25 +2,27 @@
 /**
  * Migrate ZHF data out of Dynamics 365 / Dataverse (AHA "Aha Impact") into ZHF Hub.
  *
- *   1. Sign in with an account that can read the environment, then get a token:
- *        az login
- *        az account get-access-token --resource https://<org>.crm.dynamics.com --query accessToken -o tsv
- *   2. Run (PowerShell):
- *        $env:DYNAMICS_URL="https://<org>.crm.dynamics.com"; $env:DYNAMICS_TOKEN="<token>"
- *        npx tsx scripts/migrate-from-dynamics.ts --inspect     # counts + sample fields per table
- *        npx tsx scripts/migrate-from-dynamics.ts               # DRY RUN: reads everything, writes nothing
- *        npx tsx scripts/migrate-from-dynamics.ts --commit      # writes to DATABASE_URL
+ * Run from the zhf-hub folder (PowerShell). The live AHA environment is zacharyprod:
+ *   $env:DYNAMICS_URL = "https://zacharyprod.crm.dynamics.com"
+ *   npx tsx scripts/migrate-from-dynamics.ts --inspect     # row counts + column names per table
+ *   npx tsx scripts/migrate-from-dynamics.ts               # DRY RUN: reads everything, writes nothing
+ *   npx tsx scripts/migrate-from-dynamics.ts --commit      # writes to DATABASE_URL
+ *
+ * Sign-in: the script prints a short code and the address https://microsoft.com/devicelogin.
+ * Open it, enter the code and sign in with a Microsoft account that can read the AHA data
+ * (no Azure CLI needed; the token stays in memory). If you already have a token (for example
+ * from `az account get-access-token --resource <url>`), set $env:DYNAMICS_TOKEN instead.
  *
  * Safe to re-run: every record keeps its Dataverse id in `legacyId` and is upserted on it.
- * Field names below were read from the zacharydev sandbox metadata (Nov 2026). If production
- * differs, adjust the `pick(...)` candidates — `--inspect` prints the real column names.
+ * Field names were checked against the live zacharyprod metadata on 2026-11-25; the older
+ * names from the zacharydev sandbox are kept as fallbacks.
  */
 process.env.TZ = process.env.ORG_TIMEZONE || "America/Los_Angeles";
 
 import { PrismaClient } from "@prisma/client";
 
 const BASE = (process.env.DYNAMICS_URL ?? "").replace(/\/$/, "");
-const TOKEN = process.env.DYNAMICS_TOKEN ?? "";
+let TOKEN = process.env.DYNAMICS_TOKEN ?? "";
 const argv = new Set(process.argv.slice(2));
 const COMMIT = argv.has("--commit");
 const INSPECT = argv.has("--inspect");
@@ -28,23 +30,94 @@ const db = new PrismaClient();
 
 type Row = Record<string, unknown>;
 const FV = "@OData.Community.Display.V1.FormattedValue";
+const LN = "@Microsoft.Dynamics.CRM.lookuplogicalname";
 
-if (!BASE || !TOKEN) {
-  console.error("Set DYNAMICS_URL and DYNAMICS_TOKEN first (see header of this file).");
+if (!BASE) {
+  console.error('Set DYNAMICS_URL first, e.g. $env:DYNAMICS_URL = "https://zacharyprod.crm.dynamics.com"');
   process.exit(1);
 }
 
+/** Device-code sign-in (Microsoft identity platform). The user signs in in their own browser. */
+async function signIn(): Promise<string> {
+  // Microsoft's public client id for the Azure CLI, which is allowed to request Dataverse tokens.
+  const clientId = process.env.DYNAMICS_CLIENT_ID ?? "04b07795-8ddb-461a-bbee-02f9e1bf7b46";
+  const tenant = process.env.DYNAMICS_TENANT ?? "organizations";
+  const auth = `https://login.microsoftonline.com/${tenant}/oauth2/v2.0`;
+  const dc = (await fetch(`${auth}/devicecode`, {
+    method: "POST",
+    body: new URLSearchParams({ client_id: clientId, scope: `${BASE}/.default` }),
+  }).then((r) => r.json())) as { device_code?: string; message?: string; interval?: number; expires_in?: number; error_description?: string };
+  if (!dc.device_code) throw new Error(`Sign-in could not start: ${dc.error_description ?? "unknown error"}`);
+  console.log(`\n${dc.message}\n`);
+  const deadline = Date.now() + (dc.expires_in ?? 900) * 1000;
+  let wait = (dc.interval ?? 5) * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, wait));
+    const t = (await fetch(`${auth}/token`, {
+      method: "POST",
+      body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:device_code", client_id: clientId, device_code: dc.device_code }),
+    }).then((r) => r.json())) as { access_token?: string; error?: string; error_description?: string };
+    if (t.access_token) {
+      console.log("Signed in.\n");
+      return t.access_token;
+    }
+    if (t.error === "slow_down") wait += 5000;
+    else if (t.error !== "authorization_pending") throw new Error(`Sign-in failed: ${t.error_description ?? t.error}`);
+  }
+  throw new Error("Sign-in timed out — run the script again.");
+}
+
+const headers = (extra: Record<string, string> = {}) => ({
+  Authorization: `Bearer ${TOKEN}`,
+  Accept: "application/json",
+  "OData-MaxVersion": "4.0",
+  "OData-Version": "4.0",
+  ...extra,
+});
+async function api<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}/api/data/v9.2/${path}`, { headers: headers() });
+  if (!res.ok) throw new Error(`${path}: ${res.status} ${(await res.text()).slice(0, 300)}`);
+  return (await res.json()) as T;
+}
+
+/**
+ * AHA stores event/shift/opportunity times as "time-zone independent" (Pacific wall-clock time sent
+ * with a misleading "Z"), and birthdays as date-only. Find those columns from the table metadata so
+ * they are read as Pacific local time instead of UTC (otherwise times land 7–8 hours early).
+ */
+let entityNames: Map<string, string> | null = null;
+const localDateCols = new Map<string, Set<string>>();
+async function localDateColumns(entitySet: string): Promise<Set<string>> {
+  const cached = localDateCols.get(entitySet);
+  if (cached) return cached;
+  const cols = new Set<string>();
+  try {
+    if (!entityNames) {
+      const defs = await api<{ value: { LogicalName: string; EntitySetName: string | null }[] }>("EntityDefinitions?$select=LogicalName,EntitySetName");
+      entityNames = new Map(defs.value.filter((d) => d.EntitySetName).map((d) => [d.EntitySetName!, d.LogicalName]));
+    }
+    const logical = entityNames.get(entitySet);
+    if (logical) {
+      const attrs = await api<{ value: { LogicalName: string; DateTimeBehavior?: { Value?: string } }[] }>(
+        `EntityDefinitions(LogicalName='${logical}')/Attributes/Microsoft.Dynamics.CRM.DateTimeAttributeMetadata?$select=LogicalName,DateTimeBehavior`,
+      );
+      for (const a of attrs.value) if (a.DateTimeBehavior?.Value && a.DateTimeBehavior.Value !== "UserLocal") cols.add(a.LogicalName);
+    }
+  } catch (e) {
+    console.warn(`  (could not read date settings for ${entitySet}; times are read as UTC) ${(e as Error).message.slice(0, 120)}`);
+  }
+  localDateCols.set(entitySet, cols);
+  return cols;
+}
+
 async function* fetchAll(entitySet: string): AsyncGenerator<Row> {
+  const localCols = await localDateColumns(entitySet);
   let url: string | null = `${BASE}/api/data/v9.2/${entitySet}`;
   while (url) {
     const res: Response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${TOKEN}`,
-        Accept: "application/json",
-        "OData-MaxVersion": "4.0",
-        "OData-Version": "4.0",
-        Prefer: `odata.include-annotations="OData.Community.Display.V1.FormattedValue",odata.maxpagesize=500`,
-      },
+      headers: headers({
+        Prefer: `odata.include-annotations="OData.Community.Display.V1.FormattedValue,Microsoft.Dynamics.CRM.lookuplogicalname",odata.maxpagesize=500`,
+      }),
     });
     if (res.status === 404) {
       console.warn(`  (table ${entitySet} not found — skipping)`);
@@ -52,7 +125,13 @@ async function* fetchAll(entitySet: string): AsyncGenerator<Row> {
     }
     if (!res.ok) throw new Error(`${entitySet}: ${res.status} ${(await res.text()).slice(0, 300)}`);
     const j = (await res.json()) as { value: Row[]; "@odata.nextLink"?: string };
-    for (const r of j.value) yield r;
+    for (const r of j.value) {
+      for (const c of localCols) {
+        const v = r[c];
+        if (typeof v === "string") r[c] = /^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T00:00:00` : v.replace(/Z$/, "");
+      }
+      yield r;
+    }
     url = j["@odata.nextLink"] ?? null;
   }
 }
@@ -83,6 +162,14 @@ const d = (r: Row, ...keys: string[]) => {
   return isNaN(x.getTime()) ? null : x;
 };
 const b = (r: Row, ...keys: string[]) => pick(r, keys) === true;
+/** first non-zero amount (AHA sometimes leaves one money column at 0 and fills another) */
+const money = (r: Row, ...keys: string[]) => {
+  for (const k of keys) {
+    const v = n(r, k);
+    if (v) return v;
+  }
+  return null;
+};
 const fmt = (r: Row, key: string) => (r[`${key}${FV}`] as string | undefined) ?? null;
 const lookup = (r: Row, ...attrs: string[]) => s(r, ...attrs.map((a) => `_${a}_value`));
 const cents = (x: number | null) => (x === null ? 0 : Math.round(x * 100));
@@ -94,6 +181,8 @@ const nameOf = (r: Row) => {
 
 const stats: Record<string, { read: number; written: number; skipped: number }> = {};
 const stat = (k: string) => (stats[k] ??= { read: 0, written: 0, skipped: 0 });
+// gift totals per calendar year (Pacific), to reconcile against AHA's dashboard
+const giftsByYear: Record<number, { count: number; cents: number; ahaDonationCents: number }> = {};
 
 async function counter(name: "donation" | "order" | "constituent") {
   const row = await db.counter.upsert({
@@ -108,12 +197,15 @@ const TABLES = [
   "contacts", "accounts", "msnfp_designations", "aha_donationcampaigns", "msnfp_transactions", "aha_subscriptions",
   "aha_events", "aha_eventtickettypes", "aha_eventattendees", "salesorders", "msnfp_deliveryframeworks",
   "msnfp_engagementopportunities", "aha_shifts", "msnfp_participations", "aha_volunteerhours", "aha_volunteerapplications", "msnfp_qualifications",
+  "aha_eventquestions", "aha_eventanswers", "aha_tags", "connections",
+  // read by --inspect only (not migrated): pledges and their installment schedules
+  "msnfp_donorcommitments", "msnfp_paymentschedules",
 ];
 
 async function inspect() {
   for (const t of TABLES) {
     const res = await fetch(`${BASE}/api/data/v9.2/${t}?$top=1&$count=true`, {
-      headers: { Authorization: `Bearer ${TOKEN}`, Accept: "application/json", Prefer: `odata.include-annotations="*"` },
+      headers: headers({ Prefer: `odata.include-annotations="*"` }),
     });
     if (!res.ok) {
       console.log(`${t}: ${res.status}`);
@@ -126,6 +218,7 @@ async function inspect() {
 }
 
 async function main() {
+  if (!TOKEN) TOKEN = await signIn();
   if (INSPECT) return inspect();
   console.log(COMMIT ? "COMMIT MODE — writing to the ZHF Hub database\n" : "DRY RUN — nothing will be written (add --commit to write)\n");
   const W = COMMIT;
@@ -193,7 +286,7 @@ async function main() {
       birthday: d(r, "birthdate", "aha_birthday"),
       spouseFirstName: s(r, "aha_spousefirstname", "spousesname"),
       isVip: b(r, "aha_vip"),
-      isDeceased: b(r, "aha_deceased"),
+      isDeceased: b(r, "msnfp_deceased", "aha_deceased"),
       doNotEmail: b(r, "donotbulkemail", "donotemail"),
       emergencyContactPhone: s(r, "aha_emergencycontactphone"),
       stripeCustomerId: s(r, "aha_paymentcustomerid"),
@@ -219,6 +312,75 @@ async function main() {
     contactMap.set(id, c.id);
     stat("organizations").written++;
   }
+  const contactIdFor = async (legacy: string | null) =>
+    legacy ? (contactMap.get(legacy) ?? (await db.contact.findUnique({ where: { legacyId: legacy } }))?.id ?? null) : null;
+
+  // ── Tags (AHA links them to contacts through Dynamics "connections") ──
+  // Some AHA tags (Reduced/Elevated Giving, Consistent Champion, Risk Donor…) were recalculated by AHA;
+  // they come over as a snapshot and no longer update — staff can delete the ones they don't want.
+  const tagMap = new Map<string, string>();
+  for (const r of await all("aha_tags")) {
+    stat("tags").read++;
+    const name = s(r, "aha_tag", "aha_name") ?? nameOf(r);
+    if (!W || !name) continue;
+    const t = await db.tag.upsert({ where: { name }, create: { name }, update: {} });
+    tagMap.set(s(r, "aha_tagid")!, t.id);
+    stat("tags").written++;
+  }
+  for (const r of await all("connections")) {
+    // each link is stored twice (contact→tag and tag→contact); use one direction
+    if (r[`_record1id_value${LN}`] !== "contact" || r[`_record2id_value${LN}`] !== "aha_tag") continue;
+    stat("tag links").read++;
+    if (!W) continue;
+    const contactId = await contactIdFor(s(r, "_record1id_value"));
+    const tagId = tagMap.get(s(r, "_record2id_value") ?? "");
+    if (!contactId || !tagId) {
+      stat("tag links").skipped++;
+      continue;
+    }
+    await db.contact.update({ where: { id: contactId }, data: { tags: { connect: { id: tagId } } } });
+    stat("tag links").written++;
+  }
+
+  // ── Recurring gifts (AHA subscriptions → Stripe subscription ids) ──
+  const FREQ = (txt: string | null, fallback = "MONTHLY") => {
+    const t = (txt ?? "").toLowerCase();
+    return /year|annual/.test(t) ? "ANNUAL" : /quarter/.test(t) ? "QUARTERLY" : /month|week/.test(t) ? "MONTHLY" : fallback;
+  };
+  const planMap = new Map<string, { id: string; frequency: string }>();
+  for (const r of await all("aha_subscriptions")) {
+    stat("recurring plans").read++;
+    const id = s(r, "aha_subscriptionid")!;
+    const stripeSub = s(r, "aha_subscriptionrefid");
+    const amount = cents(money(r, "aha_amount", "aha_finalamount"));
+    if (!stripeSub?.startsWith("sub_") || !amount) {
+      stat("recurring plans").skipped++; // only Stripe subscriptions can keep billing
+      continue;
+    }
+    if (!W) continue;
+    const contactId = await contactIdFor(lookup(r, "aha_customer"));
+    if (!contactId) {
+      stat("recurring plans").skipped++;
+      continue;
+    }
+    const active = r.statecode === 0;
+    const frequency = FREQ(fmt(r, "aha_frequency"));
+    const data = {
+      contactId,
+      amountCents: amount,
+      feeCoveredCents: cents(n(r, "aha_fee")),
+      frequency,
+      status: active ? "ACTIVE" : "CANCELED",
+      campaignId: campaignMap.get(lookup(r, "aha_donationcampaign") ?? "") ?? null,
+      fundId: fundMap.get(lookup(r, "aha_designation") ?? "") ?? null,
+      startDate: d(r, "aha_startdate", "createdon") ?? new Date(),
+      nextChargeAt: active ? d(r, "aha_nextbillingdate") : null,
+      canceledAt: active ? null : d(r, "aha_enddate", "modifiedon"),
+    };
+    const p = await db.recurringPlan.upsert({ where: { stripeSubscriptionId: stripeSub }, create: { ...data, stripeSubscriptionId: stripeSub }, update: data });
+    planMap.set(id, { id: p.id, frequency });
+    stat("recurring plans").written++;
+  }
 
   // ── Donations (transactions) ──
   const METHOD: [RegExp, string][] = [[/check|cheque/i, "CHECK"], [/cash/i, "CASH"], [/ach|bank|eft/i, "ACH"], [/in.?kind|goods/i, "IN_KIND"], [/stock|secur/i, "STOCK"], [/card|credit|stripe|online/i, "CARD"]];
@@ -226,17 +388,26 @@ async function main() {
     stat("donations").read++;
     const id = s(r, "msnfp_transactionid")!;
     const sub = fmt(r, "_aha_transactionsubcategory_value") ?? "";
-    if (/ticket|registration|order/i.test(sub)) {
-      stat("donations").skipped++; // ticket revenue comes over with event orders
+    // AHA labels ticket purchases "One Time Payment" in its "Event" category; that revenue comes over
+    // with the event orders. Gifts made on event pages, recurring gifts, pledge payments and the odd
+    // "One Time Payment" filed under "Donation" are kept.
+    const category = fmt(r, "_aha_transactioncategory_value") ?? "";
+    if (/ticket|registration|order/i.test(sub) || (/one time payment/i.test(sub) && !/donation/i.test(category))) {
+      stat("donations").skipped++;
       continue;
     }
     const contactLegacy = lookup(r, "msnfp_receiptoncontactid", "aha_customer", "msnfp_transaction_receiptonaccountid");
-    const amount = cents(n(r, "msnfp_amount", "aha_finalamount"));
+    // $0 rows (e.g. free event sign-ups, or payments AHA recorded only as fair market value) are skipped
+    const amount = cents(money(r, "msnfp_amount", "aha_finalamount"));
     const date = d(r, "msnfp_receiveddate", "msnfp_bookdate", "createdon");
     if (!contactLegacy || !amount || !date) {
       stat("donations").skipped++;
       continue;
     }
+    const yr = (giftsByYear[date.getFullYear()] ??= { count: 0, cents: 0, ahaDonationCents: 0 });
+    yr.count++;
+    yr.cents += amount;
+    if (/^donation$/i.test(category.trim())) yr.ahaDonationCents += amount;
     if (!W) continue;
     const contactId = contactMap.get(contactLegacy) ?? (await db.contact.findUnique({ where: { legacyId: contactLegacy } }))?.id;
     if (!contactId) {
@@ -248,6 +419,7 @@ async function main() {
     const methodTxt = fmt(r, "aha_paymentmethod") ?? "";
     const dedication = fmt(r, "aha_dedication") ?? "";
     const fee = cents(n(r, "aha_coveredprocessingfee"));
+    const plan = planMap.get(lookup(r, "aha_subscription") ?? "");
     const data = {
       contactId,
       amountCents: amount,
@@ -255,7 +427,8 @@ async function main() {
       totalCents: amount + fee,
       receivedAt: date,
       createdAt: date,
-      frequency: /recurr|monthly/i.test(sub) || lookup(r, "aha_subscription") ? "MONTHLY" : "ONE_TIME",
+      frequency: /recurr/i.test(sub) ? FREQ(sub) : plan ? plan.frequency : "ONE_TIME",
+      recurringPlanId: plan?.id ?? null,
       method: METHOD.find(([re]) => re.test(methodTxt))?.[1] ?? "CARD",
       checkNumber: s(r, "aha_checknumber"),
       status,
@@ -404,6 +577,49 @@ async function main() {
     stat("attendees").written++;
   }
 
+  // ── Event registration questions and answers ──
+  const questionMap = new Map<string, string>();
+  for (const r of await all("aha_eventquestions")) {
+    stat("event questions").read++;
+    const eventId = eventMap.get(lookup(r, "aha_event") ?? "");
+    if (!W) continue;
+    if (!eventId) {
+      stat("event questions").skipped++;
+      continue;
+    }
+    const label = s(r, "aha_question") ?? "Question";
+    const typeTxt = (fmt(r, "aha_questiontype") ?? "").toLowerCase();
+    // AHA can repeat the same question per ticket type; ZHF Hub asks it once per event
+    const q =
+      (await db.eventQuestion.findFirst({ where: { eventId, label } })) ??
+      (await db.eventQuestion.create({
+        data: {
+          eventId,
+          label,
+          type: /check|yes|bool/.test(typeTxt) ? "CHECKBOX" : "TEXT",
+          required: b(r, "aha_isrequired"),
+          sortOrder: n(r, "aha_displayorder") ?? 0,
+        },
+      }));
+    questionMap.set(s(r, "aha_eventquestionid")!, q.id);
+    stat("event questions").written++;
+  }
+  for (const r of await all("aha_eventanswers")) {
+    stat("event answers").read++;
+    if (!W) continue;
+    const attendeeLegacy = lookup(r, "aha_attendee");
+    const questionId = questionMap.get(lookup(r, "aha_question") ?? "");
+    const value = s(r, "aha_value");
+    const attendee = attendeeLegacy ? await db.attendee.findUnique({ where: { legacyId: attendeeLegacy } }) : null;
+    if (!attendee || !questionId || !value) {
+      stat("event answers").skipped++;
+      continue;
+    }
+    const answers = { ...(JSON.parse(attendee.answers ?? "{}") as Record<string, string>), [questionId]: value };
+    await db.attendee.update({ where: { id: attendee.id }, data: { answers: JSON.stringify(answers) } });
+    stat("event answers").written++;
+  }
+
   // ── Volunteer programs, opportunities, shifts ──
   const programMap = new Map<string, string>();
   for (const r of await all("msnfp_deliveryframeworks")) {
@@ -431,8 +647,12 @@ async function main() {
         description: s(r, "msnfp_description"),
         location: s(r, "msnfp_location"),
         programId: programLegacy ? programMap.get(String(r[programLegacy])) ?? null : null,
-        setting: /indoor/i.test(fmt(r, programLegacy ?? "") ?? "") ? "INDOOR" : b(r, "msnfp_virtualopportunity") ? "VIRTUAL" : "OUTDOOR",
-        registrationCloseAt: d(r, "msnfp_registrationcloseddate"),
+        // AHA's "Outdoors" is Yes/No/blank; blank keeps ZHF Hub's default (outdoor)
+        setting: b(r, "aha_virtualopportunity", "msnfp_virtualopportunity") ? "VIRTUAL" : /^no$/i.test(fmt(r, "aha_outdoors") ?? "") ? "INDOOR" : "OUTDOOR",
+        wheelchairAccessible: /^yes$/i.test(fmt(r, "aha_wheelchairaccessible") ?? ""),
+        adultsOnly: !(/^yes$/i.test(fmt(r, "aha_familyfriendly") ?? "") || (n(r, "aha_minimumage") ?? 18) < 18),
+        minAge: n(r, "aha_minimumage"),
+        registrationCloseAt: d(r, "aha_registrationcloseddate", "msnfp_registrationcloseddate"),
         status: /cancel/i.test(fmt(r, "msnfp_engagementopportunitystatus") ?? "") ? "CANCELED" : "PUBLISHED",
       },
       update: {},
@@ -464,28 +684,68 @@ async function main() {
     for (const r of oppRows) {
       const oppId = oppMap.get(String(r.msnfp_engagementopportunityid));
       if (!oppId || (await db.shift.count({ where: { opportunityId: oppId } }))) continue;
-      const start = d(r, "msnfp_startdate");
+      const start = d(r, "aha_startdate", "aha_opportunitydate", "aha_daterangestart", "msnfp_startdate");
       if (!start) continue;
-      await db.shift.create({ data: { opportunityId: oppId, name: "Main shift", startAt: start, endAt: d(r, "msnfp_enddate") ?? new Date(start.getTime() + 3 * 36e5), capacity: n(r, "msnfp_maximum") ?? 10 } });
+      // AHA's end date on a repeating opportunity is the end of the series: keep the shift within its first day
+      const end = d(r, "aha_enddate", "aha_daterangeend", "msnfp_enddate");
+      let endAt = end && end > start ? end : new Date(start.getTime() + 3 * 36e5);
+      if (endAt.toDateString() !== start.toDateString()) {
+        endAt = new Date(start.getFullYear(), start.getMonth(), start.getDate(), endAt.getHours(), endAt.getMinutes());
+        if (endAt <= start) endAt = new Date(start.getTime() + 3 * 36e5);
+      }
+      await db.shift.create({ data: { opportunityId: oppId, name: "Main shift", startAt: start, endAt, capacity: n(r, "msnfp_maximum") ?? 10 } });
     }
   }
 
+  /**
+   * Most AHA sign-ups have no shift link, only their own date (e.g. one per week of a weekly opportunity).
+   * Put each on that day's shift, creating it if needed. Dates saved as midnight US-Eastern (04:00/05:00 UTC)
+   * are date-only; those use the opportunity's usual time of day.
+   */
+  const shiftForDate = async (opportunityId: string, raw: string, hours: number | null) => {
+    const t = new Date(raw);
+    const dateOnly = t.getUTCMinutes() === 0 && (t.getUTCHours() === 4 || t.getUTCHours() === 5);
+    const [y, m, day] = dateOnly ? [t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate()] : [t.getFullYear(), t.getMonth(), t.getDate()];
+    const sameDay = await db.shift.findFirst({ where: { opportunityId, startAt: { gte: new Date(y, m, day), lt: new Date(y, m, day + 1) } }, orderBy: { startAt: "asc" } });
+    if (sameDay) return sameDay.id;
+    const template = await db.shift.findFirst({ where: { opportunityId }, orderBy: { startAt: "asc" } });
+    const start = dateOnly ? new Date(y, m, day, template?.startAt.getHours() ?? 9, template?.startAt.getMinutes() ?? 0) : t;
+    const templateMs = template ? template.endAt.getTime() - template.startAt.getTime() : 0;
+    const durationMs = templateMs > 0 && templateMs <= 12 * 36e5 ? templateMs : (hours ?? 3) * 36e5;
+    const name = start.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+    const created = await db.shift.create({ data: { opportunityId, name, startAt: start, endAt: new Date(start.getTime() + durationMs), capacity: template?.capacity ?? 10 } });
+    stat("shifts (from sign-up dates)").written++;
+    return created.id;
+  };
+
   // ── Registrations (participations) ──
+  const ACTIVE_FIRST = ["ATTENDED", "REGISTERED", "NO_SHOW", "CANCELED"];
   for (const r of await all("msnfp_participations")) {
     stat("registrations").read++;
     const id = s(r, "msnfp_participationid")!;
     if (!W) continue;
     const contactId = contactMap.get(lookup(r, "msnfp_contactid") ?? "");
     const oppId = oppMap.get(lookup(r, "msnfp_engagementopportunityid") ?? "");
-    const shiftId = shiftMap.get(lookup(r, "aha_volunteershift") ?? "") ?? (oppId ? (await db.shift.findFirst({ where: { opportunityId: oppId }, orderBy: { startAt: "asc" } }))?.id : undefined);
+    const rawStart = s(r, "msnfp_startdate");
+    const shiftId =
+      shiftMap.get(lookup(r, "aha_volunteershift") ?? "") ??
+      (oppId && rawStart ? await shiftForDate(oppId, rawStart, n(r, "msnfp_hours")) : undefined) ??
+      (oppId ? (await db.shift.findFirst({ where: { opportunityId: oppId }, orderBy: { startAt: "asc" } }))?.id : undefined);
     if (!contactId || !shiftId) {
       stat("registrations").skipped++;
       continue;
     }
     const st = (fmt(r, "msnfp_status") ?? "").toLowerCase();
     const status = /cancel|withdr/.test(st) ? "CANCELED" : /no.?show|absent/.test(st) ? "NO_SHOW" : /attend|complete/.test(st) ? "ATTENDED" : "REGISTERED";
+    const existing = await db.registration.findUnique({ where: { legacyId: id } });
     const clash = await db.registration.findUnique({ where: { shiftId_contactId: { shiftId, contactId } } });
-    if (clash) await db.registration.update({ where: { id: clash.id }, data: { legacyId: id, status } });
+    if (clash && clash.id !== existing?.id) {
+      // AHA has the same person on the same shift twice (e.g. cancelled, then signed up again): keep the active one
+      if (ACTIVE_FIRST.indexOf(status) < ACTIVE_FIRST.indexOf(clash.status)) await db.registration.update({ where: { id: clash.id }, data: { status } });
+      stat("registrations").skipped++;
+      continue;
+    }
+    if (existing) await db.registration.update({ where: { id: existing.id }, data: { shiftId, status } });
     else await db.registration.create({ data: { legacyId: id, shiftId, contactId, status, createdAt: d(r, "createdon") ?? new Date() } });
     stat("registrations").written++;
   }
@@ -592,7 +852,13 @@ async function main() {
 
   console.log("\nTable".padEnd(22) + "read".padStart(8) + "written".padStart(10) + "skipped".padStart(10));
   for (const [k, v] of Object.entries(stats)) console.log(k.padEnd(21) + String(v.read).padStart(8) + String(v.written).padStart(10) + String(v.skipped).padStart(10));
-  if (!W) console.log("\nDry run complete. Re-run with --commit to write.");
+  const usd = (c: number) => `$${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  console.log("\nGifts by year, Pacific time (ticket purchases excluded)");
+  console.log("  The last column is AHA's own \"Donation\" category, which is what AHA's dashboard KPIs add up;");
+  console.log("  the total also includes gifts made on event pages and pledge payments.");
+  for (const [y, v] of Object.entries(giftsByYear).sort())
+    console.log(`  ${y}  ${String(v.count).padStart(5)} gifts  ${usd(v.cents).padStart(13)}   AHA "Donation" category: ${usd(v.ahaDonationCents)}`);
+  if (!W) console.log("\nDry run complete — nothing was written. Re-run with --commit to write.");
 }
 
 main()

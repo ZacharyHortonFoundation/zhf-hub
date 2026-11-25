@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "zhf-hub", "run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "zhf-hub-trial",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set DATABASE_URL=file:./trial-migration.db&& npm --prefix zhf-hub run dev"],
+      "port": 3000
     }
   ]
 }

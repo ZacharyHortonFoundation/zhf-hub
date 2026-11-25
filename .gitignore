@@ -19,3 +19,9 @@ Thumbs.db
 
 # local setup log (secrets removed, but keep it local)
 .setup-supabase.log
+
+# throwaway local copy of live AHA data for the migration trial (real donor data; delete after review)
+zhf-hub/prisma/trial-migration*
+
+# internal migration figures (repo is public) - keep on the migration computer only
+docs/private/

@@ -1,23 +1,75 @@
 # Migration & cutover plan (AHA / Dynamics → ZHF Hub)
 
 ## Before you start
-- Confirm **who owns the Stripe account** AHA used. If it is ZHF's account, existing card
-  subscriptions keep billing and can be linked to ZHF Hub by Stripe subscription id. If it is AHA's
-  account, monthly donors must be re-invited to set up their gift on the new form (prepare an email).
-- Get read access to the **production** Dynamics environment (the review was done on the
-  `zacharydev` sandbox) and the Azure CLI (`az`) on the machine running the migration.
-- Stand up production ZHF Hub (PostgreSQL, hosting, secrets) — see `zhf-hub/README.md`. Do not seed.
+- Confirm **who owns the Stripe account** AHA used. AHA's recurring gifts are Stripe subscriptions
+  (`sub_…` ids), and the migration links them to ZHF Hub by that id. If it is ZHF's account, they keep
+  billing and ZHF Hub records each payment once its webhook points there. If it is AHA's account,
+  recurring donors must be re-invited to set up their gift on the new form (prepare an email).
+- The live AHA environment is **`zacharyprod`** (`https://zacharyprod.crm.dynamics.com`);
+  `zacharydev` is the sandbox. Sign in with a ZHF staff account that can read all AHA data.
+- Production ZHF Hub is ready (Supabase + Vercel, see `04-deployment.md`). Do not seed it.
+
+## Status (2026-11-25): live data checked, dry run and trial copy done
+The live data was inspected read-only, dry-run, then copied in full into a throwaway local database
+and reconciled against AHA. **Detailed counts, dollar figures and the account used are in
+`docs/private/migration-results-2026-11-25.md`, which stays on the migration computer** (the folder
+is git-ignored because this repository is public). Summary:
+- Every AHA table the migration needs reads without errors, and all admin and public pages load
+  against the copied data.
+- Gift totals per year match AHA's own "Donation" figures. ZHF Hub's current-year total is higher
+  than AHA's dashboard because it also counts gifts made on event pages and pledge payments, which
+  AHA's dashboard KPI leaves out.
+- Dashboard figures, top-donor lifetime giving, event times, volunteer hours, applications and
+  active sign-ups match AHA.
+- Still to do: staff spot-check of ~20 constituents; decide about pledges (below).
+
+The migration script was updated to match the live data:
+- Ticket purchases are labelled **"One Time Payment"** in AHA's Event category; they are left out
+  of donations (the revenue comes over with event orders). Gifts made on event pages, pledge
+  payments and the odd "One Time Payment" filed under "Donation" are kept. Yearly/quarterly
+  recurring gifts keep their frequency.
+- Rows with $0 in every amount field are skipped (free event sign-ups, and payments AHA recorded only
+  as "fair market value", i.e. purchases). When AHA leaves one money column at 0 and fills another,
+  the filled one is used.
+- Opportunity dates, indoor/outdoor, wheelchair access, family-friendly and minimum age use AHA's
+  `aha_…` columns; `msnfp_deceased` marks deceased contacts.
+- Event, shift and opportunity times are stored by AHA as Pacific wall-clock time ("time-zone
+  independent") and birthdays as date-only. The script reads each table's date settings and
+  converts these correctly (otherwise times would land 7–8 hours early).
+- Most AHA volunteer sign-ups have no shift link, only their own date (e.g. one per week of a weekly
+  opportunity). Each goes on that day's shift, created if needed; dates AHA saved as midnight
+  US-Eastern are read as dates, not 9 PM the evening before. An opportunity's main shift stays
+  within one day. When AHA has the same person on the same shift twice (cancelled, then signed up
+  again), the active sign-up is kept.
+- New: recurring plans (by Stripe subscription id, with their gifts linked), tags and tag links,
+  event registration questions and answers. Sign-in is by device code (no Azure CLI).
+
+AHA data-quality notes for staff (copied as-is): several shift names don't match their dates (AHA
+doesn't rename a shift when it is moved); a few Fireworks Booth shifts are stored 4 hours later than
+their names say, and AHA shows the same times; "Aha Test Event" is a test record that can be deleted.
+
+**Not migrated** (keep them in the Dynamics backup/export, Step 6):
+- **Pledges** (donor commitments and their installment schedules). ZHF Hub has no pledge tracking
+  yet. Decide whether to add it or track the open pledges another way.
+- Email history, AHA email-communication records, tax-receipt records, AHA settings/templates and
+  portal telemetry.
+- The **"Donation" activity log**: AHA's background job re-creates these timeline entries in bursts;
+  they duplicate the real transactions and are not separate gifts.
+- AHA's giving-trend tags (Reduced/Elevated Giving, Consistent Champion, Risk Donor, Major
+  Contributor, Recurring Donor) come over as a one-time snapshot and no longer update.
 
 ## Step 1 — Inspect (read-only)
 ```powershell
 cd zhf-hub
-az login
-$env:DYNAMICS_URL = "https://<org>.crm.dynamics.com"
-$env:DYNAMICS_TOKEN = az account get-access-token --resource $env:DYNAMICS_URL --query accessToken -o tsv
+$env:DYNAMICS_URL = "https://zacharyprod.crm.dynamics.com"
 npx tsx scripts/migrate-from-dynamics.ts --inspect
 ```
-Prints the row count and column names for every table the migration reads. Compare with the
-field names in the script (they come from the sandbox metadata) and adjust any that differ.
+The script prints a short code: open https://microsoft.com/devicelogin, enter it and sign in with an
+account that can read the AHA data (no Azure CLI needed; the token stays in memory). It then prints
+the row count and column names for every table the migration reads. Each run asks for a new code.
+
+If Windows PowerShell refuses `npx`/`npm` ("running scripts is disabled on this system"), type
+`npx.cmd` / `npm.cmd` instead.
 
 ## Step 2 — Dry run
 ```powershell
@@ -25,14 +77,20 @@ npx tsx scripts/migrate-from-dynamics.ts
 ```
 Reads everything and reports what would be created / skipped, without writing.
 
-## Step 3 — Migrate into a staging copy
+## Step 3 — Migrate into a trial copy
 ```powershell
-$env:DATABASE_URL = "<staging postgres url>"
+$env:DATABASE_URL = "file:./trial-migration.db"   # throwaway local database (git-ignored)
+npx prisma db push --skip-generate
+$env:ADMIN_EMAIL = "trial-admin@zhf.test"; npx tsx prisma/init-production.ts   # reference data + a trial login
 npx tsx scripts/migrate-from-dynamics.ts --commit
+$env:DATABASE_URL = "file:./dev.db"               # back to the demo database
 ```
-Order: funds → campaigns → contacts/accounts → donations → events → ticket types → orders &
-attendees → programs → opportunities → shifts → registrations → hours → applications → skills →
-recompute giving totals, donor levels and hour badges. Re-running is safe (upserts on `legacyId`).
+To look at the copy in the app, start the `zhf-hub-trial` preview configuration (`.claude/launch.json`).
+Delete `prisma/trial-migration.db` when done — it holds real donor data.
+Order: funds → campaigns → contacts/accounts → tags → recurring plans → donations → events →
+ticket types → orders & attendees → event questions & answers → programs → opportunities → shifts →
+registrations → hours → applications → skills → recompute giving totals, donor levels and hour
+badges. Re-running is safe (upserts on `legacyId` / Stripe subscription id).
 
 ### Reconciliation checklist
 - [ ] Constituent count matches Dynamics (minus records with no name/email)
