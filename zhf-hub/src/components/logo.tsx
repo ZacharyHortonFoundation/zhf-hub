@@ -23,7 +23,8 @@ export function Logo({ className, light = false, compact = false }: { className?
       alt="Zachary Horton Foundation"
       width={500}
       height={171}
-      className={cn("h-11 w-auto", light && "brightness-0 invert", className)}
+      // object-contain keeps the proportions even if a flex/grid parent stretches the box
+      className={cn("h-11 w-auto max-w-full object-contain object-left", light && "brightness-0 invert", className)}
     />
   );
 }

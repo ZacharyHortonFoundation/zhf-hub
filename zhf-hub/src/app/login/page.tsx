@@ -34,7 +34,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       <div className="relative hidden overflow-hidden bg-brand-800 lg:block">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(114,147,178,.55),transparent_55%),radial-gradient(circle_at_80%_80%,rgba(245,184,63,.25),transparent_50%)]" />
         <div className="relative flex h-full flex-col justify-between p-12 text-white">
-          <Logo light className="h-16" />
+          <Logo light className="h-16 self-start" />
           <div>
             <p className="text-3xl font-semibold leading-tight">
               Every donor, volunteer and event —<br />in one place.
