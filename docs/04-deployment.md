@@ -106,6 +106,24 @@ npm run db:init       # email templates, donor levels, default fund & campaign, 
 
 ## 3. Create the Vercel project
 
+✅ **Done (2026-11-25):** Vercel team **ZHF** (account zacharyhortonfoundation01, *Hobby* plan),
+project **`zhf-hub`** at **https://zhf-hub.vercel.app**, deploying `main` from
+`ZacharyHortonFoundation/zhf-hub` automatically on every push. Vercel's GitHub app is installed on
+the organization for the `zhf-hub` repository only.
+- The repository was made **public** so the Hobby plan can deploy it (Hobby can't deploy private
+  repos owned by a GitHub organization). Nothing secret is in the repo. To make it private again,
+  upgrade the Vercel team to Pro first.
+- Vercel's Hobby plan is meant for personal, non-commercial use — move the ZHF team to **Pro**
+  (≈ $20/month) before go-live.
+- Environment variables were added with `scripts/vercel-env-to-clipboard.ps1`: it asks for the
+  database password (hidden), generates `AUTH_SECRET` / `CRON_SECRET`, and copies all five
+  variables to the clipboard for a single paste into Vercel. Stripe and Resend keys come later
+  (until then payments run in demo mode and emails go to the outbox).
+- Verified after the first deploy: `/api/health` returns `{"ok":true,"db":"up"}` (connected to
+  Supabase), the public pages respond, `/admin` redirects to sign-in, the security headers are
+  present, functions run in `sfo1`, and the daily cron `/api/cron/daily` (15:00 UTC, about 7–8 AM
+  Pacific) is active and rejects calls without `CRON_SECRET` (401).
+
 1. *Add New → Project* → import the GitHub repo. **Root directory: `zhf-hub`.** Framework: Next.js
    (detected). Build command: default (`npm run build`).
 2. *Settings → Environment Variables* (Production; repeat for Preview with staging values):
