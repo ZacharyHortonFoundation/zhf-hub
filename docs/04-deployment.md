@@ -44,6 +44,17 @@ Plan for two environments:
 
 ## 2. Create the database (Supabase)
 
+✅ **Production database done (2026-11-25):** project **`zhf-hub`** (ref `xyljoylouibbngieejjy`) in
+the *Zachary Horton Foundation* Supabase organization, region **West US (North California)**,
+pooler host `aws-1-us-west-1.pooler.supabase.com`. Tables created in schema `zhf`, row-level
+security on all 31 tables, API roles revoked, **Data API switched off**, reference data and the first
+administrator added. Security Advisor: 0 errors, 0 warnings (the 31 "RLS enabled, no policy" notes
+are expected — they mean the API can't read anything).
+Still to do: **upgrade the organization to Pro before go-live** (it's on Free, which pauses after a
+week without activity). The database password is in ZHF's password manager.
+
+The steps below are how it was done (repeat them for a staging project if you want one).
+
 1. *New project* → name `zhf-hub` (and later `zhf-hub-staging`), region **West US (North
    California)**, generate a strong **database password** and store it in ZHF's password manager.
 2. Click **Connect** (top of the project) → *ORMs / Connection string*. Copy two strings and add
@@ -57,8 +68,16 @@ Plan for two environments:
 
    If the password contains symbols such as `@ # / ?`, URL-encode them (e.g. `@` → `%40`).
 
-3. From your computer, create the tables, lock down the Data API and add the first admin
-   (uses the **session pooler** string):
+3. From your computer, create the tables, lock down the Data API and add the first admin.
+   Easiest: run the helper, which asks for the database password at a hidden prompt (nothing is
+   saved to disk) and does everything below:
+
+```powershell
+cd zhf-hub
+powershell -ExecutionPolicy Bypass -File scripts\setup-supabase.ps1 -ProjectRef <project-ref> -PoolerHost <pooler-host> -AdminEmail you@zacharyhortonfoundation.org -AdminName "Your Name"
+```
+
+   Or by hand (uses the **session pooler** string):
 
 ```powershell
 cd zhf-hub

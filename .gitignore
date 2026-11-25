@@ -16,3 +16,6 @@ Thumbs.db
 
 # Claude Code personal settings
 .claude/settings.local.json
+
+# local setup log (secrets removed, but keep it local)
+.setup-supabase.log
