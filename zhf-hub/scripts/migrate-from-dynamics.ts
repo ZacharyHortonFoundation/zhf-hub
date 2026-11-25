@@ -246,11 +246,18 @@ async function main() {
     const name = (s(r, "aha_name", "aha_campaignname") ?? nameOf(r) ?? "Campaign").replace(/[“”]/g, "");
     if (!W) continue;
     const slug = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60)}-${id.slice(0, 4)}`;
-    const c = await db.campaign.upsert({
-      where: { legacyId: id },
-      create: { legacyId: id, name, slug, goalCents: cents(n(r, "aha_goal", "aha_goalamount", "aha_target")) || null, startDate: d(r, "aha_startdate"), endDate: d(r, "aha_enddate"), active: r.statecode === 0 },
-      update: { name },
-    });
+    // an AHA campaign with the same name as one of ZHF Hub's built-in campaigns (e.g. "Website
+    // Donation Form") is attached to it instead of creating a look-alike
+    const builtIn = (await db.campaign.findUnique({ where: { legacyId: id } }))
+      ? null
+      : (await db.campaign.findMany({ where: { legacyId: null } })).find((c) => c.name.trim().toLowerCase() === name.trim().toLowerCase());
+    const c = builtIn
+      ? await db.campaign.update({ where: { id: builtIn.id }, data: { legacyId: id } })
+      : await db.campaign.upsert({
+          where: { legacyId: id },
+          create: { legacyId: id, name, slug, goalCents: cents(n(r, "aha_goal", "aha_goalamount", "aha_target")) || null, startDate: d(r, "aha_startdate"), endDate: d(r, "aha_enddate"), active: r.statecode === 0 },
+          update: { name },
+        });
     campaignMap.set(id, c.id);
     stat("campaigns").written++;
   }
@@ -627,7 +634,10 @@ async function main() {
     const id = s(r, "msnfp_deliveryframeworkid")!;
     const name = (s(r, "msnfp_name") ?? nameOf(r) ?? "Program").replace(/^[^\w]+/, "").trim();
     if (!W) continue;
-    const existing = await db.program.findFirst({ where: { OR: [{ legacyId: id }, { name: { equals: name } }] } });
+    // AHA writes "INDOOR VOLUNTEER"; ZHF Hub's built-in program is "Indoor Volunteer" — match ignoring capitals
+    const existing =
+      (await db.program.findUnique({ where: { legacyId: id } })) ??
+      (await db.program.findMany({ where: { legacyId: null } })).find((p) => p.name.trim().toLowerCase() === name.toLowerCase());
     const p = existing ? await db.program.update({ where: { id: existing.id }, data: { legacyId: id } }) : await db.program.create({ data: { legacyId: id, name } });
     programMap.set(id, p.id);
     stat("programs").written++;
@@ -638,7 +648,10 @@ async function main() {
     stat("opportunities").read++;
     const id = s(r, "msnfp_engagementopportunityid")!;
     if (!W) continue;
-    const programLegacy = Object.keys(r).find((k) => /_program_value$|_msnfp_deliveryframeworkid_value$/.test(k));
+    // the program link is in aha_program on the live system (msnfp_deliveryframeworkid is empty there):
+    // use whichever program column actually has a value
+    const programLegacy = Object.keys(r).find((k) => /_program_value$|_msnfp_deliveryframeworkid_value$/.test(k) && r[k]);
+    const outdoors = fmt(r, "aha_outdoors") ?? "";
     const o = await db.opportunity.upsert({
       where: { legacyId: id },
       create: {
@@ -647,8 +660,12 @@ async function main() {
         description: s(r, "msnfp_description"),
         location: s(r, "msnfp_location"),
         programId: programLegacy ? programMap.get(String(r[programLegacy])) ?? null : null,
-        // AHA's "Outdoors" is Yes/No/blank; blank keeps ZHF Hub's default (outdoor)
-        setting: b(r, "aha_virtualopportunity", "msnfp_virtualopportunity") ? "VIRTUAL" : /^no$/i.test(fmt(r, "aha_outdoors") ?? "") ? "INDOOR" : "OUTDOOR",
+        // AHA's "Outdoors" is Yes/No/blank; when blank, the program ("INDOOR VOLUNTEER" / "OUTDOOR VOLUNTEER") decides
+        setting: b(r, "aha_virtualopportunity", "msnfp_virtualopportunity")
+          ? "VIRTUAL"
+          : /^no$/i.test(outdoors) || (!outdoors && /indoor/i.test(fmt(r, programLegacy ?? "") ?? ""))
+            ? "INDOOR"
+            : "OUTDOOR",
         wheelchairAccessible: /^yes$/i.test(fmt(r, "aha_wheelchairaccessible") ?? ""),
         adultsOnly: !(/^yes$/i.test(fmt(r, "aha_familyfriendly") ?? "") || (n(r, "aha_minimumage") ?? 18) < 18),
         minAge: n(r, "aha_minimumage"),

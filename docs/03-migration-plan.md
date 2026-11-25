@@ -9,9 +9,11 @@
   `zacharydev` is the sandbox. Sign in with a ZHF staff account that can read all AHA data.
 - Production ZHF Hub is ready (Supabase + Vercel, see `04-deployment.md`). Do not seed it.
 
-## Status (2026-11-25): live data checked, dry run and trial copy done
+## Status (2026-11-25): AHA data loaded into production
 The live data was inspected read-only, dry-run, then copied in full into a throwaway local database
-and reconciled against AHA. **Detailed counts, dollar figures and the account used are in
+and reconciled against AHA. The reconciled copy was then **loaded into the production database**
+(Step 3b): one transaction, every record count verified against the trial copy, and all admin and
+public pages checked on https://zhf-hub.vercel.app. **Detailed counts, dollar figures and the account used are in
 `docs/private/migration-results-2026-11-25.md`, which stays on the migration computer** (the folder
 is git-ignored because this repository is public). Summary:
 - Every AHA table the migration needs reads without errors, and all admin and public pages load
@@ -92,6 +94,20 @@ ticket types → orders & attendees → event questions & answers → programs �
 registrations → hours → applications → skills → recompute giving totals, donor levels and hour
 badges. Re-running is safe (upserts on `legacyId` / Stripe subscription id).
 
+## Step 3b — Load the checked copy into production
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\load-to-supabase.ps1 -ProjectRef <project ref> -PoolerHost <pooler host>
+```
+Asks for the Supabase database password at a hidden prompt, then copies the trial database into
+production in **one all-or-nothing transaction** (about 20 seconds) and compares record counts.
+It refuses to run if production already holds constituents, gifts, events or opportunities. Setup
+records production already has (funds, campaigns, programs, skills, badges) are matched by name, not
+duplicated; staff accounts, settings, templates and donor levels are never copied. Add `-Check` to see
+the plan without writing.
+
+Why not run the migration straight into production: it makes ~15,000 small queries, and from a
+computer far from the database (e.g. outside the US) each waits about half a second — hours in total.
+
 ### Reconciliation checklist
 - [ ] Constituent count matches Dynamics (minus records with no name/email)
 - [ ] Gift total per year matches the Dynamics "This Year's Donations" KPI and last year's figure
@@ -103,7 +119,12 @@ badges. Re-running is safe (upserts on `legacyId` / Stripe subscription id).
 
 ## Step 4 — Parallel run (≈2 weeks)
 - Staff use ZHF Hub for daily work; AHA stays read-only for reference.
-- Re-run the migration with `--commit` the day before cutover to pick up late changes.
+- To pick up late AHA changes before cutover, run `migrate-from-dynamics.ts --commit` with
+  `DATABASE_URL` set to the production session pooler. It adds new AHA records and refreshes
+  contacts — **which overwrites edits staff made to those contacts in ZHF Hub**, so do it before
+  staff start editing, or only if AHA really changed. It is slow from far away (see Step 3b); run it
+  from a computer in the US if possible. The bulk loader can't be used for this: it only loads into
+  an empty production database.
 
 ## Step 5 — Cutover day
 1. Put a notice on the AHA portal; freeze edits in Dynamics.
