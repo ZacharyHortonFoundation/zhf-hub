@@ -223,6 +223,7 @@ export default async function EventDetailPage({
                     feeFixedCents={settings.feeFixedCents}
                     capacityRemaining={avail?.capacityRemaining ?? null}
                     mode={paymentsMode()}
+                    privacyUrl={settings.privacyPolicyUrl}
                     tickets={event.ticketTypes.map((t) => ({
                       id: t.id,
                       name: t.name,

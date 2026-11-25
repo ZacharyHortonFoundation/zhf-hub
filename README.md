@@ -9,7 +9,7 @@ AHA Apps "Aha Impact" system (Dynamics 365 + Power Pages).
 | [`docs/01-discovery.md`](docs/01-discovery.md) | What AHA provides today (portal, Dynamics modules, data volumes) |
 | [`docs/02-solution-overview.md`](docs/02-solution-overview.md) | Architecture, AHA feature-parity map, costs, roadmap |
 | [`docs/03-migration-plan.md`](docs/03-migration-plan.md) | Moving data out of Dynamics and cutting over |
-| [`docs/04-deployment.md`](docs/04-deployment.md) | Step-by-step hosting setup (Vercel + Neon, or Azure) and go-live checklist |
+| [`docs/04-deployment.md`](docs/04-deployment.md) | Step-by-step hosting setup (Vercel + Supabase, or Azure) and go-live checklist |
 
 Quick start:
 

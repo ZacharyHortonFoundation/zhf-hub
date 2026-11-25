@@ -15,6 +15,7 @@ export type OrgSettings = {
   donateIntro: string;
   receiptFooter: string;
   requireApprovalForSignup: boolean;
+  privacyPolicyUrl: string;
 };
 
 export const DEFAULT_SETTINGS: OrgSettings = {
@@ -33,6 +34,7 @@ export const DEFAULT_SETTINGS: OrgSettings = {
   receiptFooter:
     "The Zachary Horton Foundation is a 501(c)(3) nonprofit organization. No goods or services were provided in exchange for this contribution unless noted above. Please keep this receipt for your tax records.",
   requireApprovalForSignup: true,
+  privacyPolicyUrl: "https://zacharyhortonfoundation.org/privacy-policy/",
 };
 
 export async function getSettings(): Promise<OrgSettings> {

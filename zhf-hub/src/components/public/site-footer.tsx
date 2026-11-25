@@ -24,7 +24,7 @@ export async function SiteFooter() {
         </div>
         <div>
           <p className="text-sm font-semibold text-white">Contact</p>
-          <ul className="mt-3 space-y-2 text-sm text-brand-200">
+          <ul className="mt-3 space-y-2 text-sm text-brand-200 [overflow-wrap:anywhere]">
             <li>{s.address}</li>
             <li>{s.phone}</li>
             <li>{s.email}</li>
@@ -34,7 +34,14 @@ export async function SiteFooter() {
       <div className="border-t border-white/10">
         <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-5 text-xs text-brand-300 sm:flex-row sm:justify-between sm:px-6">
           <span>© {new Date().getFullYear()} {s.orgName}. A 501(c)(3) nonprofit organization{s.ein && !s.ein.includes("X") ? ` · EIN ${s.ein}` : ""}.</span>
-          <Link href="/login" className="hover:text-white">Staff login</Link>
+          <span className="flex gap-4">
+            {s.privacyPolicyUrl ? (
+              <a href={s.privacyPolicyUrl} className="hover:text-white">
+                Privacy policy
+              </a>
+            ) : null}
+            <Link href="/login" className="hover:text-white">Staff login</Link>
+          </span>
         </div>
       </div>
     </footer>

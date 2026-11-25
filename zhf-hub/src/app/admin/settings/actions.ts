@@ -29,6 +29,7 @@ export async function saveOrgSettings(fd: FormData) {
     donateIntro: str(fd.get("donateIntro")) || undefined,
     receiptFooter: str(fd.get("receiptFooter")) || undefined,
     requireApprovalForSignup: bool(fd.get("requireApprovalForSignup")),
+    privacyPolicyUrl: /^https?:\/\//.test(str(fd.get("privacyPolicyUrl"))) ? str(fd.get("privacyPolicyUrl")) : "",
   });
   revalidatePath("/", "layout");
   redirect("/admin/settings?ok=Settings saved");

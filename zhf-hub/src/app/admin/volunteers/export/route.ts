@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getStaff } from "@/lib/auth";
 import { HOLDS_SPOT } from "@/lib/volunteers";
 import { toCsv } from "@/lib/utils";
+import { canSeeVolunteerPrivate } from "@/lib/constants";
 
 export async function GET(req: NextRequest) {
   const staff = await getStaff();
@@ -48,10 +49,13 @@ export async function GET(req: NextRequest) {
     emergency_email: c.emergencyContactEmail,
   }));
 
-  const csv = toCsv(rows, [
+  // Emergency contacts are only exported for administrators and volunteer coordinators.
+  const columns = [
     "constituent_no", "first_name", "last_name", "email", "phone", "city", "volunteer_status", "applied_on", "availability",
-    "approved_hours", "interests", "experience", "badges", "emergency_contact", "emergency_phone", "emergency_email",
-  ]);
+    "approved_hours", "interests", "experience", "badges",
+    ...(canSeeVolunteerPrivate(staff.role) ? ["emergency_contact", "emergency_phone", "emergency_email"] : []),
+  ];
+  const csv = toCsv(rows, columns);
   return new NextResponse(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",

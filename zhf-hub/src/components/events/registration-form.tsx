@@ -4,6 +4,7 @@ import { useActionState, useMemo, useState, useTransition } from "react";
 import { Lock, Minus, Plus, Tag, Ticket, X } from "lucide-react";
 import { checkDiscountCode, registerForEvent, type RegState } from "@/app/(public)/events/[slug]/actions";
 import { SubmitButton, submitNoReset } from "@/components/client-ui";
+import { PrivacyNote } from "@/components/privacy-note";
 import { Input, Notice, Select } from "@/components/ui";
 import { cn, money } from "@/lib/utils";
 import { computeTotals, discountLabel, type DiscountInfo } from "./pricing";
@@ -35,7 +36,9 @@ export function RegistrationForm({
   feeFixedCents,
   capacityRemaining,
   mode,
+  privacyUrl,
 }: {
+  privacyUrl?: string | null;
   eventId: string;
   collectAttendeeInfo: boolean;
   coverFeeEnabled: boolean;
@@ -392,6 +395,8 @@ export function RegistrationForm({
           </p>
         </>
       )}
+
+      <PrivacyNote url={privacyUrl} purpose="for this event (tickets, check-in and reminders)" />
     </form>
   );
 }

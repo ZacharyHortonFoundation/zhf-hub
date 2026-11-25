@@ -8,6 +8,8 @@ import { BadgeMedal } from "@/components/volunteer/badge-medal";
 import { addHoursForVolunteer, awardBadge, recheckBadges, revokeBadge, setVolunteerStatus } from "@/app/admin/volunteers/actions";
 import { fmtHours, shiftTimeLabel } from "@/lib/volunteers";
 import { fmtDate, toDateInput } from "@/lib/utils";
+import { getStaff } from "@/lib/auth";
+import { canSeeVolunteerPrivate } from "@/lib/constants";
 
 const smallInput =
   "h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-100";
@@ -17,10 +19,18 @@ const smallInput =
  * Server component — embeds its own forms whose actions revalidate the profile.
  */
 export async function VolunteerPanel({ contactId }: { contactId: string }) {
+  const showPrivate = canSeeVolunteerPrivate((await getStaff())?.role);
+  // Private fields are not even loaded for roles that may not see them.
   const contact = await db.contact.findUnique({
     where: { id: contactId },
+    omit: {
+      portalPasswordHash: true,
+      emergencyContactName: !showPrivate,
+      emergencyContactPhone: !showPrivate,
+      emergencyContactEmail: !showPrivate,
+    },
     include: {
-      applications: { orderBy: { createdAt: "desc" }, take: 1 },
+      applications: { orderBy: { createdAt: "desc" }, take: 1, omit: { motivation: !showPrivate } },
       skills: { include: { skill: true } },
       badges: { include: { badge: true }, orderBy: { awardedAt: "desc" } },
     },
@@ -98,9 +108,9 @@ export async function VolunteerPanel({ contactId }: { contactId: string }) {
 
         {app || contact.emergencyContactName ? (
           <dl className="grid gap-4 text-sm sm:grid-cols-2">
-            {app?.motivation ? (
+            {app?.motivation && showPrivate ? (
               <div className="sm:col-span-2">
-                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Why they volunteer</dt>
+                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">How they&apos;d like to help</dt>
                 <dd className="mt-1 italic text-slate-700">“{app.motivation}”</dd>
               </div>
             ) : null}
@@ -113,9 +123,15 @@ export async function VolunteerPanel({ contactId }: { contactId: string }) {
                 <ShieldAlert className="size-3" /> Emergency contact
               </dt>
               <dd className="mt-1 text-slate-800">
-                {contact.emergencyContactName ?? "—"}
-                {contact.emergencyContactPhone ? ` · ${contact.emergencyContactPhone}` : ""}
-                {contact.emergencyContactEmail ? <span className="block text-xs text-slate-500">{contact.emergencyContactEmail}</span> : null}
+                {showPrivate ? (
+                  <>
+                    {contact.emergencyContactName ?? "—"}
+                    {contact.emergencyContactPhone ? ` · ${contact.emergencyContactPhone}` : ""}
+                    {contact.emergencyContactEmail ? <span className="block text-xs text-slate-500">{contact.emergencyContactEmail}</span> : null}
+                  </>
+                ) : (
+                  <span className="text-xs text-slate-400">Visible to administrators and volunteer coordinators</span>
+                )}
               </dd>
             </div>
             <div>

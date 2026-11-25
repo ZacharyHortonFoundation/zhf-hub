@@ -1,16 +1,19 @@
 # Deploying ZHF Hub
 
-Recommended setup: **Vercel** (hosting) + **Neon** (PostgreSQL) + **Stripe** + **Resend**.
-It needs no servers to manage and costs roughly $20–45/month at ZHF's size (see
+Chosen setup: **Vercel** (hosting) + **Supabase** (PostgreSQL) + **Stripe** + **Resend**.
+It needs no servers to manage and costs roughly $45–65/month at ZHF's size (see
 `02-solution-overview.md`). An **Azure** alternative is at the end for keeping everything in
 ZHF's Microsoft tenant.
+
+> ZHF Hub uses Supabase **only as a PostgreSQL database**. It does not use Supabase Auth, Storage
+> or the auto-generated Data API — and it locks that API out of its tables (see step 2).
 
 Plan for two environments:
 
 | | Staging (first) | Production (at cutover) |
 |---|---|---|
 | URL | `zhf-hub.vercel.app` (or `hub-staging.zacharyhortonfoundation.org`) | `my.zacharyhortonfoundation.org` |
-| Database | Neon branch `staging` | Neon branch `main` |
+| Database | Supabase project `zhf-hub-staging` (Free plan is fine) | Supabase project `zhf-hub` (**Pro** plan) |
 | Stripe | **test** keys | **live** keys |
 | Data | migrated copy for rehearsal | final migration |
 
@@ -20,7 +23,8 @@ Plan for two environments:
 
 - [ ] **GitHub** organization or account for the code
 - [ ] **Vercel** team (Pro plan for a nonprofit org with staff users)
-- [ ] **Neon** project — region **US West 2 (Oregon)**, closest to Vercel `sfo1`
+- [ ] **Supabase** organization — projects in region **West US (North California)**, closest to Vercel `sfo1`.
+      Production needs the **Pro** plan: Free-plan projects are paused after a week without activity.
 - [ ] **Stripe** — the ZHF account (confirm whether AHA used it; see `03-migration-plan.md`).
       Apply for Stripe's discounted nonprofit pricing.
 - [ ] **Resend** — for receipts and notifications
@@ -38,24 +42,48 @@ Plan for two environments:
 - `.gitignore` excludes `.env`, local databases and build output, so no secrets are in the repo.
 - GitHub Actions (`.github/workflows/ci.yml`) type-checks and builds every push.
 
-## 2. Create the database (Neon)
+## 2. Create the database (Supabase)
 
-1. Create the project, then copy **two** connection strings from *Connection details*:
-   - **Pooled** (host contains `-pooler`) → used by the app. Append `&pgbouncer=true&connect_timeout=15`.
-   - **Direct** (no `-pooler`) → used for schema changes and the setup script.
-2. From your computer, create the tables and the first admin (uses the **direct** string):
+1. *New project* → name `zhf-hub` (and later `zhf-hub-staging`), region **West US (North
+   California)**, generate a strong **database password** and store it in ZHF's password manager.
+2. Click **Connect** (top of the project) → *ORMs / Connection string*. Copy two strings and add
+   the parameters shown — ZHF Hub keeps its tables in their own `zhf` schema, away from the
+   `public` schema that Supabase's Data API publishes:
+
+| Use | Supabase string | Add to the end |
+|---|---|---|
+| **App** (Vercel `DATABASE_URL`) | **Transaction pooler** — port `6543` | `?pgbouncer=true&connection_limit=1&schema=zhf` |
+| **Setup from your computer** (`db:deploy`, `db:init`, migration) | **Session pooler** — port `5432` | `?schema=zhf` |
+
+   If the password contains symbols such as `@ # / ?`, URL-encode them (e.g. `@` → `%40`).
+
+3. From your computer, create the tables, lock down the Data API and add the first admin
+   (uses the **session pooler** string):
 
 ```powershell
 cd zhf-hub
-$env:DATABASE_URL = "postgresql://…direct…?sslmode=require"
+$env:DATABASE_URL = "postgresql://postgres.<project-ref>:<password>@<pooler-host>:5432/postgres?schema=zhf"
 $env:ADMIN_EMAIL  = "you@zacharyhortonfoundation.org"
 $env:ADMIN_NAME   = "Your Name"
-npm run db:deploy     # creates/updates tables
+npm run db:deploy     # creates/updates tables, then locks them away from Supabase's public API
 npm run db:init       # email templates, donor levels, default fund & campaign, programs, skills, badges, first admin
 ```
-`db:init` prints a one-time temporary password if you didn't set `ADMIN_PASSWORD`. Sign in and
-change it right away. **Never run `db:seed` / `db:reset` here** — they load fake data and wipe the
-database (the seed refuses to run against PostgreSQL unless forced).
+   `db:deploy` ends with a line like
+   `[db-lockdown] schema "zhf": row level security on 31 tables; revoked access for anon, authenticated`.
+   `db:init` prints a one-time temporary password if you didn't set `ADMIN_PASSWORD` — sign in
+   and change it right away. **Never run `db:seed` / `db:reset` here** (they load fake data and
+   wipe the database; the seed refuses to run against PostgreSQL unless forced).
+
+4. Lock the doors you don't use (Supabase dashboard):
+   - *Project Settings → Data API*: turn the Data API **off**, or at least make sure `zhf` is **not**
+     listed under *Exposed schemas*. (The tables are already unreadable through it — this is a
+     second layer.)
+   - *Authentication*: leave unused — ZHF Hub has its own staff and volunteer sign-in.
+   - *Advisors → Security Advisor*: should show no errors for the `zhf` schema.
+   - *Database → Backups*: Pro includes daily backups (7 days). Consider the Point-in-Time
+     Recovery add-on once real donation data is live.
+5. When you run `npm run dev` again on your computer, it switches itself back to the local
+   SQLite database automatically.
 
 ## 3. Create the Vercel project
 
@@ -65,7 +93,7 @@ database (the seed refuses to run against PostgreSQL unless forced).
 
 | Name | Value |
 |---|---|
-| `DATABASE_URL` | Neon **pooled** string (with `pgbouncer=true`) |
+| `DATABASE_URL` | Supabase **transaction pooler** string + `?pgbouncer=true&connection_limit=1&schema=zhf` |
 | `AUTH_SECRET` | output of `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` |
 | `APP_URL` | `https://my.zacharyhortonfoundation.org` (staging: the vercel.app URL) |
 | `ORG_TIMEZONE` | `America/Los_Angeles` |
@@ -123,7 +151,9 @@ Only on cutover day (see `03-migration-plan.md`):
 - [ ] Volunteer apply → approve → sign up → log hours → approve → badge email
 - [ ] Data migration reconciled (counts and totals — `03-migration-plan.md`)
 - [ ] Uptime monitor on `/api/health` (UptimeRobot / Better Stack, free tiers)
-- [ ] Neon point-in-time restore enabled (default 7 days on paid plans)
+- [ ] Supabase on the **Pro** plan (no auto-pausing), daily backups visible under *Database → Backups*
+- [ ] Supabase Data API off (or `zhf` not exposed); Security Advisor clean
+- [ ] Staff roles reviewed: only administrators and volunteer coordinators see volunteers' private answers and emergency contacts
 - [ ] Main website buttons point to `/donate`, `/events`, `/volunteer`
 
 ## 8. Day-to-day operations
@@ -134,8 +164,9 @@ Only on cutover day (see `03-migration-plan.md`):
 | Change receipt wording, reminders | Admin → Email templates |
 | New fund or campaign | Admin → Campaigns & funds |
 | Volunteer can't sign in | Constituent → Volunteering → *Email set-password link* |
-| Schema change after a code update | `npm run db:deploy` with the direct URL, then redeploy |
-| Restore data | Neon → Branches → restore to a point in time |
+| Schema change after a code update | `npm run db:deploy` with the session-pooler URL, then redeploy |
+| Restore data | Supabase → Database → Backups (or Point-in-Time Recovery if enabled) |
+| Privacy policy link on forms | Admin → Settings → Organization → *Privacy policy URL* |
 | Rotate a secret | Change it in Vercel → redeploy (changing `AUTH_SECRET` signs everyone out) |
 
 ---

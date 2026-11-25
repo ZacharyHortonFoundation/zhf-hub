@@ -150,8 +150,9 @@ async function main() {
 
   // ── Tags ───────────────────────────────────────────
   const tagNames: [string, string][] = [
-    ["Board Member", "violet"], ["Major Donor Prospect", "amber"], ["Golf Sponsor", "green"], ["Lost a Loved One", "rose"],
-    ["Recovery Community", "teal"], ["Church Partner", "blue"], ["Media", "slate"], ["Volunteer Leader", "green"], ["Business Partner", "blue"],
+    // Tags describe the relationship with ZHF only — never health, addiction or recovery status.
+    ["Board Member", "violet"], ["Major Donor Prospect", "amber"], ["Golf Sponsor", "green"], ["Event Regular", "rose"],
+    ["Community Advocate", "teal"], ["Church Partner", "blue"], ["Media", "slate"], ["Volunteer Leader", "green"], ["Business Partner", "blue"],
   ];
   const tags: Record<string, { id: string }> = {};
   for (const [name, color] of tagNames) tags[name] = await db.tag.create({ data: { name, color } });
@@ -197,7 +198,7 @@ async function main() {
     emergencyContactName: "Rafael Lopez",
     emergencyContactPhone: "(559) 555-0142",
     source: "VOLUNTEER",
-    tags: { connect: [{ id: tags["Volunteer Leader"]!.id }, { id: tags["Recovery Community"]!.id }] },
+    tags: { connect: [{ id: tags["Volunteer Leader"]!.id }, { id: tags["Community Advocate"]!.id }] },
   });
 
   for (let i = 0; i < 150; i++) {
@@ -205,8 +206,8 @@ async function main() {
     const last = pick(LAST);
     const couple = chance(0.12);
     const t: { id: string }[] = [];
-    if (chance(0.06)) t.push(tags["Lost a Loved One"]!);
-    if (chance(0.05)) t.push(tags["Recovery Community"]!);
+    if (chance(0.06)) t.push(tags["Event Regular"]!);
+    if (chance(0.05)) t.push(tags["Community Advocate"]!);
     if (chance(0.03)) t.push(tags["Church Partner"]!);
     await mkContact({
       firstName: first,
@@ -663,8 +664,8 @@ async function main() {
         contactId: v.id,
         status,
         motivation: pick([
-          "I lost a close friend to an overdose and want to help other families.",
-          "I'm in recovery myself (4 years!) and want to give back.",
+          "I want to help other families in our community.",
+          "I enjoy working events and want to give back.",
           "Looking for meaningful ways to serve my community.",
           "My church encouraged us to get involved with local outreach.",
           "I'm a nursing student and care about harm reduction.",

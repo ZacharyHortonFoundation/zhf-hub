@@ -84,6 +84,7 @@ export default async function DonatePage({ searchParams }: { searchParams: Promi
             fee={{ percent: settings.feePercent, fixedCents: settings.feeFixedCents }}
             mode={paymentsMode()}
             orgName={settings.orgName}
+            privacyUrl={settings.privacyPolicyUrl}
           />
           <p className="mt-4 flex items-center justify-center gap-1.5 text-xs text-brand-200">
             <Lock className="size-3.5" /> 256-bit encrypted · {settings.orgName} is a 501(c)(3) nonprofit

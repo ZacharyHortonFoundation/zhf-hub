@@ -6,6 +6,7 @@ import { Check, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { applyAction, type ApplyState } from "@/app/(public)/volunteer/actions";
 import { cn } from "@/lib/utils";
 import { submitNoReset } from "@/components/client-ui";
+import { PrivacyNote } from "@/components/privacy-note";
 
 const STEPS = ["Your info", "Skills & interests", "Review"];
 const AVAILABILITY = ["Weekday mornings", "Weekday afternoons", "Weekday evenings", "Weekends", "Flexible"];
@@ -43,7 +44,7 @@ function Chip({ name, value, label, checked, onChange }: { name: string; value: 
   );
 }
 
-export function ApplyWizard({ skills }: { skills: Skill[] }) {
+export function ApplyWizard({ skills, privacyUrl }: { skills: Skill[]; privacyUrl?: string | null }) {
   const [state, action, pending] = useActionState<ApplyState, FormData>(applyAction, {});
   const [step, setStep] = useState(1);
   const [clientErrors, setClientErrors] = useState<Record<string, string>>({});
@@ -192,7 +193,7 @@ export function ApplyWizard({ skills }: { skills: Skill[] }) {
             ))}
           </div>
           <div className="mt-8">
-            <FieldBox label="Why do you want to volunteer with ZHF? (optional)" name="motivation" error={errors.motivation}>
+            <FieldBox label="What would you most enjoy helping with? (optional)" name="motivation" error={errors.motivation}>
               <textarea
                 id="motivation"
                 name="motivation"
@@ -200,8 +201,12 @@ export function ApplyWizard({ skills }: { skills: Skill[] }) {
                 className={cn(inputCls, "h-auto py-2.5")}
                 value={vals.motivation ?? ""}
                 onChange={set("motivation")}
-                placeholder="Share as much or as little as you like."
+                placeholder="e.g. events, deliveries, design, outreach…"
+                aria-describedby="motivation-hint"
               />
+              <p id="motivation-hint" className="mt-1 text-xs text-slate-500">
+                Please don&apos;t share health, medical or recovery details here — just tell us how you&apos;d like to help.
+              </p>
             </FieldBox>
           </div>
           <h3 className="mt-8 font-semibold text-slate-900">Create your volunteer portal password</h3>
@@ -252,7 +257,7 @@ export function ApplyWizard({ skills }: { skills: Skill[] }) {
             </div>
             {vals.motivation ? (
               <div className="sm:col-span-2">
-                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Why ZHF</dt>
+                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">How you&apos;d like to help</dt>
                 <dd className="mt-0.5 whitespace-pre-line text-slate-900">{vals.motivation}</dd>
               </div>
             ) : null}
@@ -278,6 +283,7 @@ export function ApplyWizard({ skills }: { skills: Skill[] }) {
               </span>
             </label>
           </div>
+          <PrivacyNote url={privacyUrl} purpose="to coordinate volunteering with you" className="mt-5" />
         </section>
 
         <div className="mt-8 flex items-center justify-between border-t border-slate-100 pt-6">

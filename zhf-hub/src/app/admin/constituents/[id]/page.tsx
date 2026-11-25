@@ -208,7 +208,7 @@ export default async function Profile({ params, searchParams }: { params: Promis
             </Card>
 
             <Card>
-              <CardHeader title="Tags" />
+              <CardHeader title="Tags" description="Describe the relationship with ZHF — never health or recovery status." />
               <CardBody>
                 <form action={setTags.bind(null, c.id)} className="space-y-3">
                   <div className="flex flex-wrap gap-2">
@@ -405,7 +405,7 @@ export default async function Profile({ params, searchParams }: { params: Promis
                 <Field label="Subject" required>
                   <Input name="subject" required />
                 </Field>
-                <Field label="Details">
+                <Field label="Details" hint="No health, addiction, treatment or recovery details.">
                   <Textarea name="body" rows={4} />
                 </Field>
                 <Field label="Due date" hint="For tasks">

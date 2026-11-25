@@ -84,7 +84,7 @@ export default async function VolunteerHome() {
         </Link>
       </section>
 
-      <section className="mx-auto mt-16 grid max-w-6xl gap-10 px-4 sm:px-6 lg:grid-cols-[1.4fr_1fr]">
+      <section className="mx-auto mt-16 grid max-w-6xl grid-cols-1 gap-10 px-4 sm:px-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] [&>*]:min-w-0">
         <div>
           <div className="flex items-end justify-between">
             <div>

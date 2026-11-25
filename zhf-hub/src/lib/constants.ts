@@ -50,6 +50,13 @@ export const ROLES = [
   { value: "COORDINATOR", label: "Volunteer coordinator", help: "Volunteers and events only" },
 ] as const;
 
+/**
+ * Volunteers' free-text answers ("how I'd like to help") and emergency contacts can contain
+ * personal details, so only these roles see them (not general fundraising staff).
+ */
+export const VOLUNTEER_PRIVATE_ROLES = ["ADMIN", "COORDINATOR"];
+export const canSeeVolunteerPrivate = (role?: string | null) => !!role && VOLUNTEER_PRIVATE_ROLES.includes(role);
+
 /** Default Stripe nonprofit-ish pricing used for "cover the fee". Editable in Settings. */
 export const DEFAULT_FEE = { percent: 2.9, fixedCents: 30 };
 

@@ -6,6 +6,7 @@
  * Runs automatically before `prisma generate`, `next build` and the db:* scripts.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -27,4 +28,14 @@ if (next !== schema) {
   console.log(`[prisma-provider] schema switched to ${provider}`);
 } else {
   console.log(`[prisma-provider] using ${provider}`);
+}
+
+// --generate: regenerate the Prisma client only if it was built for the other engine
+if (process.argv.includes("--generate")) {
+  const generated = path.join(root, "node_modules", ".prisma", "client", "schema.prisma");
+  const current = existsSync(generated) ? (readFileSync(generated, "utf8").match(/datasource\s+db\s*\{[^}]*?provider\s*=\s*"(\w+)"/)?.[1] ?? "") : "";
+  if (current !== provider) {
+    console.log(`[prisma-provider] regenerating Prisma client for ${provider}…`);
+    execSync("npx prisma generate", { cwd: root, stdio: "inherit" });
+  }
 }

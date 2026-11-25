@@ -5,6 +5,7 @@ import { Building2, Check, ChevronLeft, Heart, Lock, Repeat, User, Users } from 
 import { donate, type DonateState } from "@/app/(public)/donate/actions";
 import { buttonClass, Field, Input, Select, Textarea, Notice } from "@/components/ui";
 import { SubmitButton, submitNoReset } from "@/components/client-ui";
+import { PrivacyNote } from "@/components/privacy-note";
 import { cn } from "@/lib/utils";
 
 type Fund = { id: string; name: string; description: string | null };
@@ -18,6 +19,7 @@ type Props = {
   fee: { percent: number; fixedCents: number };
   mode: "demo" | "test" | "live";
   orgName: string;
+  privacyUrl?: string | null;
 };
 
 const FREQS = [
@@ -392,7 +394,7 @@ export function DonateWizard(p: Props) {
             </Field>
           ) : null}
 
-          <Field label="Comments" className="mt-5">
+          <Field label="Comments" className="mt-5" hint="Please don't include health, medical or recovery details.">
             <Textarea name="comments" rows={3} placeholder="Anything you'd like us to know?" />
           </Field>
         </section>
@@ -429,6 +431,7 @@ export function DonateWizard(p: Props) {
               <Lock className="size-4" /> You&apos;ll enter your card, Apple Pay, Google Pay or bank details on Stripe&apos;s secure page.
             </p>
           )}
+          <PrivacyNote url={p.privacyUrl} purpose="to process your gift, send your receipt and keep you updated if you'd like" className="mt-4" />
         </section>
 
         {/* Nav */}

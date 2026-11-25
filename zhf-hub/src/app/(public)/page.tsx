@@ -134,8 +134,8 @@ export default async function HomePage() {
 
       {/* Volunteer */}
       <section className="mx-auto mt-20 max-w-6xl px-4 sm:px-6">
-        <div className="grid gap-8 rounded-3xl bg-sand/70 p-8 md:grid-cols-[1fr_1.3fr] md:p-12">
-          <div>
+        <div className="grid grid-cols-1 gap-8 rounded-3xl bg-sand/70 p-5 sm:p-8 md:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] md:p-12">
+          <div className="min-w-0">
             <p className="text-sm font-semibold uppercase tracking-wider text-brand-500">Volunteer</p>
             <h2 className="mt-1 text-3xl font-semibold text-slate-900">Show up for someone today</h2>
             <p className="mt-3 text-slate-600">Every hour you give supports meaningful change. Sign up for a single shift or make it a habit — we&apos;ll track your hours and celebrate your milestones.</p>
@@ -144,7 +144,7 @@ export default async function HomePage() {
               <LinkButton href="/volunteer/opportunities" variant="outline" className="rounded-full">Browse opportunities</LinkButton>
             </div>
           </div>
-          <div className="space-y-3">
+          <div className="min-w-0 space-y-3">
             {opps.map((s) => {
               const left = Math.max(0, s.capacity - s._count.registrations);
               return (

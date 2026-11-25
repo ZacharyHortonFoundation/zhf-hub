@@ -65,6 +65,9 @@ export default async function Settings({ searchParams }: { searchParams: Promise
               <Field label="Main website">
                 <Input name="website" defaultValue={s.website} />
               </Field>
+              <Field label="Privacy policy URL" hint="Linked from the donation, event and volunteer forms and the footer" className="sm:col-span-2">
+                <Input name="privacyPolicyUrl" type="url" defaultValue={s.privacyPolicyUrl} placeholder="https://zacharyhortonfoundation.org/privacy-policy/" />
+              </Field>
               <Field label="Receipt footer" className="sm:col-span-2">
                 <Textarea name="receiptFooter" defaultValue={s.receiptFooter} rows={4} />
               </Field>
@@ -142,7 +145,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
             </form>
           </Card>
           <Card className="h-fit">
-            <CardHeader title="Tags" description="Used to group constituents. Remove unused ones here." />
+            <CardHeader title="Tags" description="Used to group constituents. Keep them about the relationship with ZHF — avoid tags that reveal health, addiction or recovery status." />
             <ul className="divide-y divide-slate-100">
               {tags.map((t) => (
                 <li key={t.id} className="flex items-center justify-between px-5 py-2.5 text-sm">

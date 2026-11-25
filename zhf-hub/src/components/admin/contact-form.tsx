@@ -72,7 +72,7 @@ export function ContactForm({ action, contact, cancelHref }: { action: (fd: Form
             <Checkbox name="doNotEmail" label="Do not email" description="Skip all automated emails" defaultChecked={c?.doNotEmail} />
             <Checkbox name="isDeceased" label="Deceased" description="Exclude from outreach" defaultChecked={c?.isDeceased} />
           </div>
-          <Field label="Notes">
+          <Field label="Notes" hint="Relationship and giving notes only. Don't record health, addiction, treatment or recovery details — this system isn't built for confidential health information.">
             <Textarea name="notes" defaultValue={c?.notes ?? ""} rows={4} placeholder="Relationship notes, interests, connection to ZHF…" />
           </Field>
         </CardBody>

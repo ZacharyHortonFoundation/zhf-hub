@@ -6,6 +6,7 @@ import { Avatar, Badge, Card, EmptyState, PageHeader, StatusBadge } from "@/comp
 import { SubmitButton } from "@/components/client-ui";
 import { reviewApplication } from "../actions";
 import { cn, fmtDate, fmtDateTime, fullName } from "@/lib/utils";
+import { canSeeVolunteerPrivate } from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Volunteer applications" };
@@ -17,7 +18,8 @@ const TABS = [
 ];
 
 export default async function ApplicationsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
-  await requireStaff();
+  const staff = await requireStaff();
+  const showPrivate = canSeeVolunteerPrivate(staff.role);
   const sp = await searchParams;
   const status = TABS.some((t) => t.value === sp.status) ? sp.status! : "PENDING";
 
@@ -26,7 +28,19 @@ export default async function ApplicationsPage({ searchParams }: { searchParams:
       where: { status },
       orderBy: { createdAt: status === "PENDING" ? "asc" : "desc" },
       take: 100,
-      include: { contact: { include: { skills: { include: { skill: true } } } } },
+      // Private fields are not even loaded for roles that may not see them.
+      omit: { motivation: !showPrivate },
+      include: {
+        contact: {
+          omit: {
+            portalPasswordHash: true,
+            emergencyContactName: !showPrivate,
+            emergencyContactPhone: !showPrivate,
+            emergencyContactEmail: !showPrivate,
+          },
+          include: { skills: { include: { skill: true } } },
+        },
+      },
     }),
     db.volunteerApplication.groupBy({ by: ["status"], _count: true }),
   ]);
@@ -98,7 +112,7 @@ export default async function ApplicationsPage({ searchParams }: { searchParams:
                       ) : null}
                       {c.city ? <span>{c.city}</span> : null}
                     </div>
-                    {a.motivation ? (
+                    {a.motivation && showPrivate ? (
                       <blockquote className="mt-4 rounded-xl border-l-4 border-brand-200 bg-brand-50/60 px-4 py-3 text-sm italic text-slate-700">“{a.motivation}”</blockquote>
                     ) : null}
                     <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
@@ -123,9 +137,15 @@ export default async function ApplicationsPage({ searchParams }: { searchParams:
                           <ShieldAlert className="size-3" /> Emergency contact
                         </dt>
                         <dd className="mt-1 text-slate-800">
-                          {c.emergencyContactName ?? "—"}
-                          {c.emergencyContactPhone ? ` · ${c.emergencyContactPhone}` : ""}
-                          {c.emergencyContactEmail ? <span className="block text-xs text-slate-500">{c.emergencyContactEmail}</span> : null}
+                          {showPrivate ? (
+                            <>
+                              {c.emergencyContactName ?? "—"}
+                              {c.emergencyContactPhone ? ` · ${c.emergencyContactPhone}` : ""}
+                              {c.emergencyContactEmail ? <span className="block text-xs text-slate-500">{c.emergencyContactEmail}</span> : null}
+                            </>
+                          ) : (
+                            <span className="text-xs text-slate-400">Visible to administrators and volunteer coordinators</span>
+                          )}
                         </dd>
                       </div>
                       <div>

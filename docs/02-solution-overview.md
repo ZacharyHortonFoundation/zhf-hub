@@ -81,18 +81,27 @@ _A purpose-built replacement for the AHA Apps "Aha Impact" platform (Dynamics 36
 - Staff passwords hashed (bcrypt); sessions are signed, http-only cookies; three roles
   (Administrator, Staff, Volunteer coordinator); every admin page and action re-checks the role.
 - Donor statement links are signed tokens that expire.
-- Recommended before launch: enable Microsoft Entra ID sign-in for staff (phase 2), daily
-  database backups (built into Neon / Azure), and HTTPS-only hosting (default on Vercel/Azure).
+- Sign-in lockout after 5 failed attempts; security headers; admin pages hidden from search engines.
+- **Not a health-records system.** ZHF Hub holds donors, attendees and volunteers — not the people
+  ZHF serves — so HIPAA isn't expected to apply (ZHF should confirm it doesn't provide treatment,
+  bill insurance, or run federally funded treatment referrals). Safeguards built in: staff
+  guidance not to record health/recovery details, privacy notes + policy link on every public
+  form, neutral tags, and volunteers' free-text answers and emergency contacts visible only to
+  administrators and volunteer coordinators. Client/case records must stay out of this system.
+- Database on Supabase: ZHF Hub tables live in their own `zhf` schema with row-level security on
+  and Supabase's public Data API locked out (`npm run db:deploy` does this automatically).
+- Recommended before launch: Microsoft Entra ID sign-in for staff (phase 2), daily database
+  backups (included in Supabase Pro), and HTTPS-only hosting (default on Vercel).
 
 ## 5. Running costs (estimate — verify current pricing)
 
 | Item | Option | Approx. monthly |
 |---|---|---|
 | Hosting | Vercel Pro (1 seat) **or** Azure App Service B1 | ~$20 / ~$13 |
-| Database | Neon / Supabase / Azure PostgreSQL Flexible (burstable) | $0–25 |
+| Database | **Supabase Pro** for production (Free plan for staging) — or Azure PostgreSQL Flexible | ~$25 |
 | Email | Resend (3,000/mo free; Pro tier for more) | $0–20 |
 | Payments | Stripe — apply for the nonprofit discounted rate | per-transaction fees only |
-| **Total platform** | | **≈ $20–70 / month** + Stripe fees |
+| **Total platform** | | **≈ $45–65 / month** + Stripe fees |
 
 Compare against the current AHA subscription + Dynamics 365 / Power Pages licences.
 

@@ -64,7 +64,7 @@ event reminders (7 days / 1 day), shift reminders (3 days / 1 day) and the follo
 
 | Variable | Required | Notes |
 |---|---|---|
-| `DATABASE_URL` | yes | `file:./dev.db` locally; a PostgreSQL URL in production |
+| `DATABASE_URL` | yes | `file:./dev.db` locally; Supabase PostgreSQL in production (pooler URL ending `&schema=zhf`) |
 | `AUTH_SECRET` | yes | 48+ random bytes; signs staff/volunteer sessions and statement links |
 | `APP_URL` | yes | Public URL, e.g. `https://my.zacharyhortonfoundation.org` |
 | `ORG_TIMEZONE` | no | Defaults to `America/Los_Angeles`; all dates are shown/entered in this zone |
@@ -77,13 +77,14 @@ event reminders (7 days / 1 day), shift reminders (3 days / 1 day) and the follo
 
 ## Going to production
 
-Full step-by-step guide: **[`../docs/04-deployment.md`](../docs/04-deployment.md)** (Vercel + Neon,
+Full step-by-step guide: **[`../docs/04-deployment.md`](../docs/04-deployment.md)** (Vercel + Supabase,
 or Azure). In short:
 
 1. **Database:** set `DATABASE_URL` to PostgreSQL. The schema switches engine automatically
    (`scripts/prisma-provider.mjs`) — SQLite locally, PostgreSQL in production, same code.
    Text search is case-insensitive on both.
-2. **Create tables + first admin** (from your computer, with the *direct* connection string):
+2. **Create tables + first admin** (from your computer, with the Supabase *session pooler* string;
+   `db:deploy` also locks Supabase's public Data API out of the tables):
    `npm run db:deploy` then `ADMIN_EMAIL=… ADMIN_NAME=… npm run db:init`.
    Never run `db:seed`/`db:reset` against production (the seed refuses unless forced).
 3. **Host:** Vercel (`vercel.json` includes the daily cron) or any Docker host (`Dockerfile`,

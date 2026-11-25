@@ -4,6 +4,7 @@ import { Clock, HeartHandshake, ShieldCheck } from "lucide-react";
 import { db } from "@/lib/db";
 import { getVolunteer } from "@/lib/auth";
 import { ApplyWizard } from "@/components/volunteer/apply-wizard";
+import { getSettings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Volunteer application" };
@@ -16,7 +17,10 @@ export default async function ApplyPage() {
       redirect("/volunteer/portal?ok=" + encodeURIComponent("You've already applied — here's your portal."));
     }
   }
-  const skills = await db.skill.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
+  const [skills, settings] = await Promise.all([
+    db.skill.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
+    getSettings(),
+  ]);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
@@ -26,7 +30,7 @@ export default async function ApplyPage() {
           <h1 className="mt-1 text-3xl font-semibold text-slate-900">Volunteer application</h1>
           <p className="mt-2 text-slate-600">Fill out the form below to join our volunteer community. We&apos;ll get in touch with you soon!</p>
           <div className="mt-8">
-            <ApplyWizard skills={skills} />
+            <ApplyWizard skills={skills} privacyUrl={settings.privacyPolicyUrl} />
           </div>
         </div>
         <aside className="space-y-4">
