@@ -1,0 +1,528 @@
+// ZHF Hub data model
+// ------------------------------------------------------------------
+// Money is stored in integer CENTS everywhere (amountCents, priceCents...).
+// "Enum-like" fields are plain strings so the same schema runs on SQLite
+// (local dev) and PostgreSQL (production). Allowed values are listed in
+// comments and enforced in src/lib/constants.ts + zod validators.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Staff & settings ─────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         String    @default("STAFF") // ADMIN | STAFF | COORDINATOR
+  active       Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  activities   Activity[]
+}
+
+model Setting {
+  key   String @id
+  value String
+}
+
+// ─── Constituents (CRM) ───────────────────────────────────────────
+
+model Contact {
+  id              String    @id @default(cuid())
+  constituentNo   Int       @unique
+  type            String    @default("INDIVIDUAL") // INDIVIDUAL | BUSINESS
+  firstName       String    @default("")
+  lastName        String    @default("")
+  spouseFirstName String?
+  spouseLastName  String?
+  orgName         String?
+  taxId           String?
+  email           String?
+  phone           String?
+  address1        String?
+  city            String?
+  state           String?
+  zip             String?
+  birthday        DateTime?
+  source          String?   // ONLINE_DONATION | EVENT | VOLUNTEER | MANUAL | IMPORT
+  notes           String?
+
+  // Giving roll-ups (recomputed by lib/rollups.ts after each gift)
+  lifetimeCents   Int       @default(0)
+  giftCount       Int       @default(0)
+  largestCents    Int       @default(0)
+  firstGiftAt     DateTime?
+  lastGiftAt      DateTime?
+  donorLevel      String?   // name of DonorLevel
+
+  // Stewardship checklist (mirrors the AHA contact fields)
+  isVip              Boolean @default(false)
+  isDeceased         Boolean @default(false)
+  doNotEmail         Boolean @default(false)
+  sentThankYou       Boolean @default(false)
+  invitedToEvents    Boolean @default(false)
+  offeredMeeting     Boolean @default(false)
+  sharedImpactStory  Boolean @default(false)
+  informedMonthly    Boolean @default(false)
+
+  // Volunteer profile
+  volunteerStatus         String  @default("NONE") // NONE | PENDING | APPROVED | REJECTED | INACTIVE
+  emergencyContactName    String?
+  emergencyContactPhone   String?
+  emergencyContactEmail   String?
+  portalPasswordHash      String? // volunteer portal login
+
+  stripeCustomerId String?
+  legacyId         String?  @unique // Dynamics contactid for migrated records
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tags            Tag[]
+  donations       Donation[]
+  recurringPlans  RecurringPlan[]
+  activities      Activity[]
+  eventOrders     EventOrder[]
+  attendees       Attendee[]
+  applications    VolunteerApplication[]
+  skills          VolunteerSkill[]
+  registrations   Registration[]
+  hours           VolunteerHour[]
+  badges          ContactBadge[]
+  emails          EmailLog[]
+
+  @@index([email])
+  @@index([lastName, firstName])
+}
+
+model Tag {
+  id       String    @id @default(cuid())
+  name     String    @unique
+  color    String    @default("slate")
+  contacts Contact[]
+}
+
+model Activity {
+  id          String   @id @default(cuid())
+  contactId   String
+  contact     Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type        String   @default("NOTE") // NOTE | CALL | MEETING | EMAIL | TASK | SYSTEM
+  subject     String
+  body        String?
+  dueAt       DateTime?
+  done        Boolean  @default(false)
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([contactId, createdAt])
+}
+
+model DonorLevel {
+  id            String @id @default(cuid())
+  name          String @unique
+  minLifetimeCents Int
+  minGifts      Int    @default(0)
+  rank          Int    // 1 = highest
+  color         String @default("slate")
+}
+
+// ─── Fundraising ──────────────────────────────────────────────────
+
+model Fund {
+  id          String     @id @default(cuid())
+  legacyId    String?    @unique
+  name        String     @unique
+  description String?
+  active      Boolean    @default(true)
+  isDefault   Boolean    @default(false)
+  donations   Donation[]
+  plans       RecurringPlan[]
+}
+
+model Campaign {
+  id          String     @id @default(cuid())
+  legacyId    String?    @unique
+  name        String
+  slug        String     @unique
+  description String?
+  goalCents   Int?
+  startDate   DateTime?
+  endDate     DateTime?
+  active      Boolean    @default(true)
+  isDefault   Boolean    @default(false) // used when a gift has no campaign
+  createdAt   DateTime   @default(now())
+  donations   Donation[]
+  plans       RecurringPlan[]
+  events      Event[]
+}
+
+model Donation {
+  id               String    @id @default(cuid())
+  number           Int       @unique          // receipt number
+  contactId        String
+  contact          Contact   @relation(fields: [contactId], references: [id])
+  amountCents      Int                         // gift amount (tax-deductible portion)
+  feeCoveredCents  Int       @default(0)       // processing fee the donor chose to cover
+  totalCents       Int                         // amount actually charged
+  frequency        String    @default("ONE_TIME") // ONE_TIME | MONTHLY | QUARTERLY | ANNUAL
+  recurringPlanId  String?
+  recurringPlan    RecurringPlan? @relation(fields: [recurringPlanId], references: [id])
+  campaignId       String?
+  campaign         Campaign? @relation(fields: [campaignId], references: [id])
+  fundId           String?
+  fund             Fund?     @relation(fields: [fundId], references: [id])
+  method           String    @default("CARD")  // CARD | ACH | CHECK | CASH | IN_KIND | STOCK | OTHER
+  status           String    @default("SUCCEEDED") // PENDING | SUCCEEDED | FAILED | REFUNDED
+  source           String    @default("ONLINE")    // ONLINE | MANUAL | EVENT | IMPORT
+  receivedAt       DateTime  @default(now())
+  anonymous        Boolean   @default(false)
+  dedicationType   String?   // HONOR | MEMORY
+  dedicationName   String?
+  notifyName       String?
+  notifyEmail      String?
+  notifyMessage    String?
+  matchingEmployer String?
+  comments         String?
+  checkNumber      String?
+  inKindDescription String?
+  stripeSessionId  String?   @unique
+  stripePaymentId  String?
+  isTest           Boolean   @default(false)   // demo-mode payment
+  receiptSentAt    DateTime?
+  eventOrderId     String?   @unique
+  eventOrder       EventOrder? @relation(fields: [eventOrderId], references: [id])
+  legacyId         String?   @unique
+  createdAt        DateTime  @default(now())
+
+  @@index([receivedAt])
+  @@index([contactId])
+}
+
+model RecurringPlan {
+  id                   String    @id @default(cuid())
+  contactId            String
+  contact              Contact   @relation(fields: [contactId], references: [id])
+  amountCents          Int
+  feeCoveredCents      Int       @default(0)
+  frequency            String    // MONTHLY | QUARTERLY | ANNUAL
+  status               String    @default("ACTIVE") // ACTIVE | PAUSED | PAST_DUE | CANCELED
+  campaignId           String?
+  campaign             Campaign? @relation(fields: [campaignId], references: [id])
+  fundId               String?
+  fund                 Fund?     @relation(fields: [fundId], references: [id])
+  startDate            DateTime  @default(now())
+  nextChargeAt         DateTime?
+  canceledAt           DateTime?
+  stripeSubscriptionId String?   @unique
+  isTest               Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  donations            Donation[]
+}
+
+// ─── Events ───────────────────────────────────────────────────────
+
+model Event {
+  id                   String    @id @default(cuid())
+  legacyId             String?   @unique
+  slug                 String    @unique
+  title                String
+  summary              String?
+  description          String?
+  imageUrl             String?
+  category             String    @default("Community") // Community | Fundraiser | Awareness | Outreach | Training
+  startAt              DateTime
+  endAt                DateTime?
+  venueName            String?
+  address              String?
+  city                 String?
+  capacity             Int?
+  registrationDeadline DateTime?
+  status               String    @default("DRAFT") // DRAFT | PUBLISHED | CANCELED
+  coverFeeEnabled      Boolean   @default(true)
+  allowDonation        Boolean   @default(true)
+  collectAttendeeInfo  Boolean   @default(true)   // name/email for every attendee
+  coordinatorName      String?
+  coordinatorEmail     String?
+  campaignId           String?
+  campaign             Campaign? @relation(fields: [campaignId], references: [id])
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  ticketTypes   TicketType[]
+  questions     EventQuestion[]
+  discountCodes DiscountCode[]
+  orders        EventOrder[]
+  attendees     Attendee[]
+
+  @@index([startAt])
+}
+
+model TicketType {
+  id                   String   @id @default(cuid())
+  legacyId             String?  @unique
+  eventId              String
+  event                Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name                 String
+  description          String?
+  priceCents           Int      @default(0)
+  quantity             Int?     // null = unlimited (still bounded by event capacity)
+  attendeesPerTicket   Int      @default(1) // e.g. "Foursome" golf ticket = 4
+  countsTowardCapacity Boolean  @default(true)
+  active               Boolean  @default(true)
+  sortOrder            Int      @default(0)
+  attendees            Attendee[]
+}
+
+model EventQuestion {
+  id        String  @id @default(cuid())
+  eventId   String
+  event     Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  label     String
+  type      String  @default("TEXT") // TEXT | SELECT | CHECKBOX
+  options   String? // newline-separated for SELECT
+  required  Boolean @default(false)
+  sortOrder Int     @default(0)
+}
+
+model DiscountCode {
+  id             String  @id @default(cuid())
+  eventId        String
+  event          Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  code           String
+  percentOff     Int?
+  amountOffCents Int?
+  maxUses        Int?
+  timesUsed      Int     @default(0)
+  active         Boolean @default(true)
+  orders         EventOrder[]
+
+  @@unique([eventId, code])
+}
+
+model EventOrder {
+  id              String    @id @default(cuid())
+  legacyId        String?   @unique
+  number          Int       @unique
+  eventId         String
+  event           Event     @relation(fields: [eventId], references: [id])
+  contactId       String
+  contact         Contact   @relation(fields: [contactId], references: [id])
+  subtotalCents   Int
+  discountCents   Int       @default(0)
+  feeCents        Int       @default(0)
+  donationCents   Int       @default(0)
+  totalCents      Int
+  status          String    @default("PENDING") // PENDING | PAID | CANCELED | REFUNDED
+  discountCodeId  String?
+  discountCode    DiscountCode? @relation(fields: [discountCodeId], references: [id])
+  stripeSessionId String?   @unique
+  isTest          Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  attendees       Attendee[]
+  donation        Donation?
+}
+
+model Attendee {
+  id           String     @id @default(cuid())
+  legacyId     String?    @unique
+  orderId      String
+  order        EventOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  eventId      String
+  event        Event      @relation(fields: [eventId], references: [id])
+  ticketTypeId String
+  ticketType   TicketType @relation(fields: [ticketTypeId], references: [id])
+  contactId    String?
+  contact      Contact?   @relation(fields: [contactId], references: [id])
+  firstName    String
+  lastName     String
+  email        String?
+  ticketCode   String     @unique // printed as QR code
+  answers      String?    // JSON: { [questionId]: answer }
+  checkedInAt  DateTime?
+  createdAt    DateTime   @default(now())
+
+  @@index([eventId])
+}
+
+// ─── Volunteers ───────────────────────────────────────────────────
+
+model Program {
+  id            String        @id @default(cuid())
+  legacyId      String?       @unique
+  name          String        @unique
+  description   String?
+  color         String        @default("blue")
+  opportunities Opportunity[]
+}
+
+model Skill {
+  id            String           @id @default(cuid())
+  legacyId      String?          @unique
+  name          String           @unique
+  volunteers    VolunteerSkill[]
+  opportunities Opportunity[]
+}
+
+model VolunteerSkill {
+  contactId String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  skillId   String
+  skill     Skill   @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  kind      String  // INTEREST | EXPERIENCE
+
+  @@id([contactId, skillId, kind])
+}
+
+model VolunteerApplication {
+  id           String    @id @default(cuid())
+  legacyId     String?   @unique
+  contactId    String
+  contact      Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  status       String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  motivation   String?
+  availability String?   // free text: "Weekends", "Weekday evenings"...
+  over18       Boolean   @default(true)
+  agreedWaiver Boolean   @default(false)
+  reviewNotes  String?
+  reviewedAt   DateTime?
+  reviewedBy   String?
+  createdAt    DateTime  @default(now())
+}
+
+model Opportunity {
+  id                   String    @id @default(cuid())
+  legacyId             String?   @unique
+  title                String
+  summary              String?
+  description          String?
+  imageUrl             String?
+  programId            String?
+  program              Program?  @relation(fields: [programId], references: [id])
+  setting              String    @default("OUTDOOR") // INDOOR | OUTDOOR | VIRTUAL
+  location             String?
+  address              String?
+  city                 String?
+  wheelchairAccessible Boolean   @default(false)
+  adultsOnly           Boolean   @default(true)
+  minAge               Int?
+  registrationCloseAt  DateTime?
+  contactName          String?
+  contactEmail         String?
+  contactPhone         String?
+  status               String    @default("PUBLISHED") // DRAFT | PUBLISHED | CANCELED
+  createdAt            DateTime  @default(now())
+  skills               Skill[]
+  shifts               Shift[]
+  hours                VolunteerHour[]
+}
+
+model Shift {
+  id            String       @id @default(cuid())
+  legacyId      String?      @unique
+  opportunityId String
+  opportunity   Opportunity  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  name          String       @default("Main shift")
+  startAt       DateTime
+  endAt         DateTime
+  capacity      Int
+  registrations Registration[]
+  hours         VolunteerHour[]
+
+  @@index([startAt])
+}
+
+model Registration {
+  id        String   @id @default(cuid())
+  legacyId  String?  @unique
+  shiftId   String
+  shift     Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  contactId String
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  status    String   @default("REGISTERED") // REGISTERED | CANCELED | ATTENDED | NO_SHOW
+  createdAt DateTime @default(now())
+
+  @@unique([shiftId, contactId])
+}
+
+model VolunteerHour {
+  id            String       @id @default(cuid())
+  legacyId      String?      @unique
+  contactId     String
+  contact       Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  opportunityId String?
+  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id])
+  shiftId       String?
+  shift         Shift?       @relation(fields: [shiftId], references: [id])
+  date          DateTime
+  hours         Float
+  description   String?
+  status        String       @default("PENDING") // PENDING | APPROVED | REJECTED
+  reviewedBy    String?
+  reviewedAt    DateTime?
+  createdAt     DateTime     @default(now())
+}
+
+model Badge {
+  id             String         @id @default(cuid())
+  name           String         @unique
+  tier           String         // BRONZE | SILVER | GOLD
+  kind           String         // HOURS | RECOGNITION
+  hoursThreshold Float?
+  description    String?
+  awards         ContactBadge[]
+}
+
+model ContactBadge {
+  id        String   @id @default(cuid())
+  contactId String
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  badgeId   String
+  badge     Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  awardedAt DateTime @default(now())
+  awardedBy String?
+  note      String?
+
+  @@unique([contactId, badgeId])
+}
+
+// ─── Communications ───────────────────────────────────────────────
+
+model EmailTemplate {
+  id        String   @id @default(cuid())
+  key       String   @unique // e.g. donation.receipt — referenced from code
+  name      String
+  category  String   // Donations | Events | Volunteers | Account
+  subject   String
+  body      String   // plain text with {{merge_fields}}; rendered into branded HTML
+  enabled   Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+}
+
+model EmailLog {
+  id          String   @id @default(cuid())
+  templateKey String?
+  toEmail     String
+  toName      String?
+  subject     String
+  body        String
+  status      String   // SENT | LOGGED | FAILED | SKIPPED
+  error       String?
+  contactId   String?
+  contact     Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model Counter {
+  name  String @id // donation | order | constituent
+  value Int
+}

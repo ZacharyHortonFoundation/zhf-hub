@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+
+  /* ZHF brand — navy #33506B / blue #4E7599 from zacharyhortonfoundation.org */
+  --color-brand-50: #f2f6fa;
+  --color-brand-100: #e1eaf3;
+  --color-brand-200: #c6d6e6;
+  --color-brand-300: #9db8d2;
+  --color-brand-400: #7293b2;
+  --color-brand-500: #4e7599;
+  --color-brand-600: #3e6185;
+  --color-brand-700: #33506b;
+  --color-brand-800: #2b4359;
+  --color-brand-900: #24384a;
+  --color-brand-950: #172433;
+
+  --color-cream: #fbf9f5;
+  --color-sand: #f4efe6;
+  --color-accent: #f5b83f;
+  --color-accent-600: #d99a1e;
+  --color-ink: #1d1c1c;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background: var(--color-cream);
+  color: var(--color-ink);
+}
+
+/* Subtle focus ring that matches the brand */
+:focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+}
+
+/* Thin, unobtrusive scrollbars in the admin */
+.scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+.scroll-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: white; }
+}

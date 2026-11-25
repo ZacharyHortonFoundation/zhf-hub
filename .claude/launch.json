@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "zhf-hub",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "zhf-hub", "run", "dev"],
+      "port": 3000
+    }
+  ]
+}

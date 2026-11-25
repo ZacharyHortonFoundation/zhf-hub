@@ -1,0 +1,18 @@
+# dependencies & build output
+node_modules/
+.next/
+*.tsbuildinfo
+
+# secrets & local data (never commit)
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Claude Code personal settings
+.claude/settings.local.json
